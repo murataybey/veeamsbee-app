@@ -1,0 +1,5 @@
+# Çalışma zamanı verileri ve sırlar — asla commit edilmez
+.env
+data/
+*.log
+node_modules/
