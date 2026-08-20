@@ -6,7 +6,7 @@ use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager,
+    AppHandle, Emitter, Manager,
 };
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_notification::NotificationExt as _;
@@ -24,6 +24,38 @@ fn toggle_window(app: &AppHandle) {
             let _ = win.show();
             let _ = win.set_focus();
         }
+    }
+}
+
+// Karakter penceresini ekranın sağ alt köşesine (görev çubuğunun üstüne) yerleştir
+fn position_mascot(win: &tauri::WebviewWindow) {
+    let mon = win
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| win.primary_monitor().ok().flatten());
+    if let (Some(mon), Ok(size)) = (mon, win.outer_size()) {
+        let sf = mon.scale_factor();
+        let ms = mon.size();
+        let mp = mon.position();
+        let x = mp.x + ms.width as i32 - size.width as i32 - (16.0 * sf) as i32;
+        let y = mp.y + ms.height as i32 - size.height as i32 - (64.0 * sf) as i32;
+        let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+    }
+}
+
+fn show_mascot(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window("mascot") {
+        position_mascot(&win);
+        let _ = win.show();
+        let _ = app.emit("mascot-visibility", true);
+    }
+}
+
+fn hide_mascot(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window("mascot") {
+        let _ = win.hide();
+        let _ = app.emit("mascot-visibility", false);
     }
 }
 
@@ -103,6 +135,27 @@ fn hide_window(app: AppHandle) {
     }
 }
 
+#[tauri::command]
+fn toggle_main(app: AppHandle) {
+    toggle_window(&app);
+}
+
+#[tauri::command]
+fn mascot_show(app: AppHandle) {
+    show_mascot(&app);
+}
+
+#[tauri::command]
+fn mascot_hide(app: AppHandle) {
+    hide_mascot(&app);
+}
+
+/// Karaktere konuşma balonu göstert (kritik uyarılarda main penceresi çağırır)
+#[tauri::command]
+fn mascot_say(app: AppHandle, text: String, level: Option<String>) {
+    let _ = app.emit("mascot-say", serde_json::json!({ "text": text, "level": level }));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -124,8 +177,9 @@ pub fn run() {
             ))?;
 
             let show = MenuItem::with_id(app, "show", "Durumu Göster", true, None::<&str>)?;
+            let mascot = MenuItem::with_id(app, "mascot", "Karakteri Göster/Gizle", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Çıkış", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &quit])?;
+            let menu = Menu::with_items(app, &[&show, &mascot, &quit])?;
 
             TrayIconBuilder::with_id(TRAY_ID)
                 .icon(Image::from_bytes(include_bytes!("../icons-tray/tray-gray.png"))?)
@@ -134,6 +188,13 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => toggle_window(app),
+                    "mascot" => {
+                        let visible = app
+                            .get_webview_window("mascot")
+                            .and_then(|w| w.is_visible().ok())
+                            .unwrap_or(false);
+                        if visible { hide_mascot(app) } else { show_mascot(app) }
+                    }
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -158,6 +219,11 @@ pub fn run() {
                     let _ = window.hide();
                 }
             }
+            // Pencereler kapatılmaz, gizlenir — uygulama tepside yaşar
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             api_request,
@@ -166,7 +232,11 @@ pub fn run() {
             autostart_enabled,
             autostart_set,
             open_url,
-            hide_window
+            hide_window,
+            toggle_main,
+            mascot_show,
+            mascot_hide,
+            mascot_say
         ])
         .run(tauri::generate_context!())
         .expect("Sbee tray başlatılamadı");

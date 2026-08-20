@@ -1,7 +1,7 @@
 // Sbee tray arayüzü — tüm ağ istekleri Rust'taki api_request komutu üzerinden gider.
 const { invoke } = window.__TAURI__.core;
 
-const DEFAULTS = { base: 'http://10.11.18.110:8080', interval: 60, notif: true };
+const DEFAULTS = { base: 'http://10.11.18.110:8080', interval: 60, notif: true, mascot: true };
 let settings = loadSettings();
 let pollTimer = null;
 let lastEventTs = localStorage.getItem('sbee-last-event-ts') || '';
@@ -157,6 +157,11 @@ function notifyNewEvents(st) {
                 body: ev.message.slice(0, 180),
             }).catch(() => {});
         }
+        // Kritik sorunlarda karakter de haber versin
+        const crit = fresh.find((ev) => ev.level === 'critical');
+        if (crit && settings.mascot) {
+            invoke('mascot_say', { text: crit.message.slice(0, 160), level: 'critical' }).catch(() => {});
+        }
     }
     const newest = st.events[0]?.ts;
     if (newest && newest > lastEventTs) {
@@ -264,6 +269,7 @@ async function renderSettings() {
     form.base.value = settings.base;
     form.interval.value = settings.interval;
     form.notif.checked = settings.notif;
+    form.mascot.checked = settings.mascot !== false;
     try { form.autostart.checked = await invoke('autostart_enabled'); } catch { /* desteklenmiyor */ }
 }
 
@@ -273,7 +279,9 @@ $('#settings-form').addEventListener('submit', async (e) => {
     settings.base = form.base.value.trim().replace(/\/+$/, '');
     settings.interval = Number(form.interval.value) || 60;
     settings.notif = form.notif.checked;
+    settings.mascot = form.mascot.checked;
     saveSettings();
+    invoke(settings.mascot ? 'mascot_show' : 'mascot_hide').catch(() => {});
     try { await invoke('autostart_set', { enabled: form.autostart.checked }); } catch { /* desteklenmiyor */ }
     $('#settings-msg').textContent = 'Kaydedildi.';
     setTimeout(() => { $('#settings-msg').textContent = ''; }, 2000);
@@ -301,3 +309,12 @@ $('#btn-web').addEventListener('click', () => invoke('open_url', { url: settings
 renderSettings();
 refresh();
 schedulePolling();
+
+// Karakter: açılışta göster (ayar kapalı değilse); tepsiden değişirse ayarı eşitle
+if (settings.mascot !== false) invoke('mascot_show').catch(() => {});
+window.__TAURI__.event.listen('mascot-visibility', (ev) => {
+    settings.mascot = !!ev.payload;
+    saveSettings();
+    const form = $('#settings-form');
+    if (form?.mascot) form.mascot.checked = settings.mascot;
+}).catch(() => {});
