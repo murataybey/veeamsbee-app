@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { startMonitor, forcePoll, getStatus, getEvents, summaryForDigest } from './monitor.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -441,6 +442,96 @@ app.get('/api/quota', (_req, res) => {
     res.json(quotaState());
 });
 
+// --- İzleme: tray istemcileri ve web arayüzü için durum/olay uçları ---
+app.get('/api/status', (_req, res) => {
+    const status = getStatus();
+    res.json({
+        ...status,
+        events: getEvents(50),
+        digest: currentDigest,
+        quota: quotaState(),
+    });
+});
+
+app.get('/api/events', (req, res) => {
+    const limit = Math.min(Number(req.query.limit) || 50, 500);
+    res.json(getEvents(limit));
+});
+
+app.post('/api/monitor/poll', async (_req, res) => {
+    try {
+        res.json(await forcePoll());
+    } catch (err) {
+        res.status(502).json({ error: String(err?.message || err) });
+    }
+});
+
+// --- AI günlük özet: izleme verisini Intelligence'a yorumlatır (1 soru harcar) ---
+const DIGEST_FILE = process.env.DIGEST_FILE || '/web/data/digest.json';
+const DIGEST_HOUR = Number(process.env.DIGEST_HOUR ?? 7);
+const DIGEST_ENABLED = (process.env.DIGEST_ENABLED || 'true') === 'true';
+let currentDigest = null;
+try {
+    currentDigest = JSON.parse(fs.readFileSync(DIGEST_FILE, 'utf8'));
+} catch { /* henüz özet yok */ }
+
+async function generateDigest() {
+    const data = summaryForDigest();
+    if (!data.trim()) throw new Error('İzleme verisi henüz toplanmadı.');
+    const question = 'Sen bir kıdemli backup mühendisisin. Aşağıda Veeam ortamımızın izleme '
+        + 'sisteminden gelen bugünkü durum verileri var. Bu verilere dayanarak Türkçe, kısa bir '
+        + 'günlük durum değerlendirmesi yaz: genel sağlık, dikkat edilmesi gereken sorunlar, '
+        + 'kök neden tahminleri ve somut öneriler. Veri:\n\n' + data;
+    const result = await enqueue(async () => {
+        const c = await getClient();
+        return c.callTool(
+            { name: resolvedTool, arguments: { [resolvedArg]: question } },
+            undefined,
+            { timeout: ASK_TIMEOUT_MS },
+        );
+    });
+    recordAsk();
+    const payload = extractPayload(result);
+    if (result.isError) throw new Error(payload.message || 'Intelligence hata döndürdü');
+    currentDigest = {
+        generatedAt: new Date().toISOString(),
+        text: typeof payload.message === 'string' ? payload.message : JSON.stringify(payload.message ?? ''),
+    };
+    try {
+        fs.writeFileSync(DIGEST_FILE, JSON.stringify(currentDigest));
+    } catch (err) {
+        console.error('digest persist failed:', err?.message || err);
+    }
+    return currentDigest;
+}
+
+app.get('/api/digest', (_req, res) => {
+    res.json(currentDigest || { generatedAt: null, text: null });
+});
+
+app.post('/api/digest/generate', async (_req, res) => {
+    try {
+        res.json(await generateDigest());
+    } catch (err) {
+        res.status(502).json({ error: String(err?.message || err) });
+    }
+});
+
+// Günlük otomatik özet: her gün DIGEST_HOUR'da bir kez (1 Intelligence sorusu)
+if (DIGEST_ENABLED) {
+    const digestTimer = setInterval(() => {
+        const now = new Date();
+        const lastGen = currentDigest ? new Date(currentDigest.generatedAt) : null;
+        const staleEnough = !lastGen || (now - lastGen) > 20 * 3600_000;
+        if (now.getHours() === DIGEST_HOUR && staleEnough) {
+            generateDigest()
+                .then(() => console.log('günlük AI özeti üretildi'))
+                .catch((err) => console.error('günlük özet üretilemedi:', err?.message || err));
+        }
+    }, 10 * 60 * 1000);
+    digestTimer.unref?.();
+}
+
 app.get('/api/health', async (_req, res) => {
     let c = null;
     try {
@@ -519,4 +610,5 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`veeam-web listening on http://0.0.0.0:${PORT}`);
     // Warm up the MCP connection so the first question doesn't pay the startup cost
     getClient().catch((err) => console.error('MCP warmup failed:', err?.message || err));
+    startMonitor(() => registry.servers);
 });

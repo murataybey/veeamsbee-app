@@ -23,7 +23,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 WORKDIR /web
 COPY --from=web-builder /web/node_modules ./node_modules
-COPY app/server.js ./
+COPY app/server.js app/monitor.js ./
 COPY app/public ./public
 
 RUN addgroup -g 1001 -S appgroup && adduser -u 1001 -S appuser -G appgroup && \
