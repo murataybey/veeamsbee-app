@@ -252,6 +252,70 @@ async function getClient() {
     return connecting;
 }
 
+// Zaman aşımında teşhis: aktif sunucunun Intelligence durumunu sorgula
+function httpsJson(url, { method = 'GET', headers = {}, body = null } = {}) {
+    return new Promise((resolve, reject) => {
+        const req = https.request({
+            hostname: url.hostname,
+            port: url.port || 443,
+            path: url.pathname + url.search,
+            method,
+            headers,
+            rejectUnauthorized: false,
+            timeout: 15000,
+        }, (res) => {
+            let data = '';
+            res.on('data', (ch) => { data += ch; });
+            res.on('end', () => {
+                try { resolve({ status: res.statusCode, json: JSON.parse(data) }); }
+                catch { resolve({ status: res.statusCode, json: null }); }
+            });
+        });
+        req.on('timeout', () => req.destroy(new Error('timeout')));
+        req.on('error', reject);
+        if (body) req.write(body);
+        req.end();
+    });
+}
+
+async function probeIntelligence(srv) {
+    if (!srv) return null;
+    try {
+        const form = new URLSearchParams({
+            grant_type: 'password',
+            username: srv.username,
+            password: srv.password,
+        }).toString();
+        const tok = await httpsJson(new URL('private-api/oauth2/token', srv.webUrl), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: form,
+        });
+        if (!tok.json?.access_token) return { authFailed: true, status: tok.status };
+        const info = await httpsJson(new URL('private-api/v1/veeamintelligence/serviceInfo', srv.webUrl), {
+            headers: { Authorization: 'Bearer ' + tok.json.access_token },
+        });
+        return info.json;
+    } catch {
+        return null;
+    }
+}
+
+function intelligenceHint(info, srv) {
+    if (!srv) return '';
+    if (!info) return `Aktif sunucuya (${srv.name}) ulaşılamadı — ağ bağlantısını ve adresi kontrol edin.`;
+    if (info.authFailed) return `Aktif sunucuda (${srv.name}) kimlik doğrulama başarısız (HTTP ${info.status}) — kullanıcı adı/parolayı kontrol edin.`;
+    const parts = [`Aktif sunucu: ${srv.name} (${info.productVersion || '?'}, mod: ${info.chatbotMode})`];
+    if (info.chatbotEnabled === false) {
+        parts.push('Veeam Intelligence bu sunucuda devre dışı — web konsolundan etkinleştirin.');
+    } else if (info.chatbotMode === 'Advanced' && info.isAdvancedModeAllowed === false) {
+        parts.push('Sunucu Advanced mode’a ayarlı ancak sürüm/lisans buna izin vermiyor (isAdvancedModeAllowed=false); istekler bu yüzden askıda kalıp zaman aşımına düşer. Çözüm: sunucunun web konsolundan modu Basic’e alın ya da VBR’ı Advanced’in desteklendiği sürüme (örn. 13.1) yükseltin.');
+    } else if (info.chatbotMode === 'Base') {
+        parts.push('Sunucu Basic modda — yalnızca dokümantasyondan cevap verir.');
+    }
+    return parts.join(' · ');
+}
+
 async function dropClient(c) {
     if (!c) return;
     if (client === c) client = null;
@@ -440,7 +504,14 @@ app.post('/api/ask', async (req, res) => {
                 await dropClient(usedClient);
             }
         }
-        res.status(502).json({ error: msg });
+        // Zaman aşımı / bağlantı hatasında aktif sunucuyu yoklayıp anlaşılır ipucu ekle
+        let fullMsg = msg;
+        if (/-32001|timed out|timeout|connection closed/i.test(msg)) {
+            const srv = activeServer();
+            const hint = intelligenceHint(await probeIntelligence(srv), srv);
+            if (hint) fullMsg = msg + ' — ' + hint;
+        }
+        res.status(502).json({ error: fullMsg });
     }
 });
 
