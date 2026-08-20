@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sbee</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header data-tauri-drag-region>
+    <img src="assets/logo.png" alt="Sbee" class="logo" />
+    <div class="head-text">
+      <div class="title">Sbee</div>
+      <div class="subtitle" id="subtitle">Veeam izleme</div>
+    </div>
+    <span id="overall-pill" class="pill gray">—</span>
+    <button id="btn-close" class="icon-btn" title="Gizle">✕</button>
+  </header>
+
+  <nav id="tabs">
+    <button class="tab active" data-tab="status">Durum</button>
+    <button class="tab" data-tab="servers">Sunucular</button>
+    <button class="tab" data-tab="settings">Ayarlar</button>
+  </nav>
+
+  <main id="view">
+    <section id="tab-status" class="tabpane active">
+      <div id="status-content"><div class="muted center">Yükleniyor…</div></div>
+    </section>
+
+    <section id="tab-servers" class="tabpane">
+      <div id="server-list"><div class="muted center">Yükleniyor…</div></div>
+      <details id="add-server">
+        <summary>+ Sunucu ekle</summary>
+        <form id="server-form">
+          <input name="name" placeholder="İsim (örn. Merkez VBR)" required />
+          <input name="address" placeholder="IP veya adres" required />
+          <select name="product">
+            <option value="vbr" selected>VBR</option>
+            <option value="vone">Veeam ONE</option>
+            <option value="vspc">VSPC</option>
+          </select>
+          <input name="username" placeholder="Kullanıcı adı" required />
+          <input name="password" type="password" placeholder="Parola" required />
+          <button type="submit" class="btn primary">Ekle</button>
+          <div class="hint">Sunucu merkezi Sbee kayıt defterine eklenir ve tüm istemciler tarafından izlenir.</div>
+        </form>
+      </details>
+    </section>
+
+    <section id="tab-settings" class="tabpane">
+      <form id="settings-form">
+        <label>Sbee sunucu adresi
+          <input name="base" placeholder="http://10.11.18.110:8080" required />
+        </label>
+        <label>Yenileme aralığı (saniye)
+          <input name="interval" type="number" min="30" max="600" value="60" />
+        </label>
+        <label class="row">
+          <input name="notif" type="checkbox" checked />
+          <span>Yeni sorunlarda bildirim göster</span>
+        </label>
+        <label class="row">
+          <input name="autostart" type="checkbox" />
+          <span>Windows/macOS açılışında başlat</span>
+        </label>
+        <button type="submit" class="btn primary">Kaydet</button>
+        <div id="settings-msg" class="hint"></div>
+      </form>
+    </section>
+  </main>
+
+  <footer>
+    <button id="btn-refresh" class="btn small">↻ Yenile</button>
+    <button id="btn-web" class="btn small">Sbee Web</button>
+    <span id="meta" class="muted small-text"></span>
+  </footer>
+
+  <script src="main.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Sbee tray varsayılan yetkileri — tüm ağ/OS işlemleri Rust komutları üzerinden",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

@@ -297,12 +297,15 @@ async function collectServer(srv) {
             };
         }
 
-        // Lisans
+        // Lisans (Backup Viewer rolünde 403 döner → sessizce atlanır;
+        // 13.x'te bitiş tarihi instanceLicenseSummary altına taşınmış olabilir)
         if (licenseRes?.status === 200 && licenseRes.json) {
             snap.license = {
                 edition: licenseRes.json.edition || null,
                 status: licenseRes.json.status || null,
-                expirationDate: licenseRes.json.expirationDate || null,
+                expirationDate: licenseRes.json.expirationDate
+                    || licenseRes.json.instanceLicenseSummary?.expirationDate
+                    || null,
             };
         }
     } catch (err) {
