@@ -7,7 +7,26 @@ on:
       - 'tray-v*'
 
 jobs:
+  # Release'i önce tek bir iş oluşturur; matris işleri yalnızca paket yükler.
+  # (4 işin aynı anda release oluşturmaya çalışması 'already_exists' yarışına yol açıyordu)
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: create GitHub release for tag
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "Sbee Tray v${TAG#tray-v}" \
+              --notes "Sbee tray uygulaması — kurulum paketleri ektedir. Windows: .msi/.exe, macOS: .dmg, Linux: .AppImage/.deb"
+
   build-tray:
+    needs: create-release
     permissions:
       contents: write
     strategy:
