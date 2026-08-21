@@ -66,3 +66,17 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+      # Release oluşturulamasa bile paketler kaybolmasın
+      - name: upload bundles as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbee-bundles-${{ strategy.job-index }}
+          path: |
+            tray/src-tauri/target/**/bundle/msi/*.msi
+            tray/src-tauri/target/**/bundle/nsis/*.exe
+            tray/src-tauri/target/**/bundle/dmg/*.dmg
+            tray/src-tauri/target/**/bundle/appimage/*.AppImage
+            tray/src-tauri/target/**/bundle/deb/*.deb
+          if-no-files-found: ignore
