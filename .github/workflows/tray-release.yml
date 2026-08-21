@@ -63,6 +63,6 @@ jobs:
           tagName: tray-v__VERSION__
           releaseName: 'Sbee Tray v__VERSION__'
           releaseBody: 'Sbee tray uygulaması — kurulum paketleri ektedir. Windows: .msi/.exe, macOS: .dmg, Linux: .AppImage/.deb'
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
