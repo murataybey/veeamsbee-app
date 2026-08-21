@@ -141,6 +141,11 @@ fn toggle_main(app: AppHandle) {
 }
 
 #[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
 fn mascot_show(app: AppHandle) {
     show_mascot(&app);
 }
@@ -169,13 +174,13 @@ pub fn run() {
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        // ÖNEMLİ: pencereler oluşmadan kaydolmalı; setup içinde kaydetmek
+        // "state() called before manage()" çökmesine yol açıyor (yarış durumu)
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(|app| {
-            #[cfg(desktop)]
-            app.handle().plugin(tauri_plugin_autostart::init(
-                tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-                None,
-            ))?;
-
             let show = MenuItem::with_id(app, "show", "Durumu Göster", true, None::<&str>)?;
             let mascot = MenuItem::with_id(app, "mascot", "Karakteri Göster/Gizle", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Çıkış", true, None::<&str>)?;
@@ -234,6 +239,7 @@ pub fn run() {
             open_url,
             hide_window,
             toggle_main,
+            quit_app,
             mascot_show,
             mascot_hide,
             mascot_say

@@ -301,7 +301,8 @@ document.querySelectorAll('.tab').forEach((btn) => {
     });
 });
 
-$('#btn-close').addEventListener('click', () => invoke('hide_window'));
+$('#btn-min').addEventListener('click', () => invoke('hide_window'));
+$('#btn-close').addEventListener('click', () => invoke('quit_app'));
 $('#btn-refresh').addEventListener('click', () => refresh(true));
 $('#btn-web').addEventListener('click', () => invoke('open_url', { url: settings.base }));
 
