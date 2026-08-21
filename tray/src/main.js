@@ -355,6 +355,20 @@ document.querySelectorAll('.tab').forEach((btn) => {
 
 $('#btn-min').addEventListener('click', () => invoke('hide_window'));
 $('#btn-close').addEventListener('click', () => invoke('quit_app'));
+
+// Başlıktan taşıma: data-tauri-drag-region çalışmadığı ortamlar için Rust yedeği
+const header = document.querySelector('header');
+let hdrPress = null;
+header.addEventListener('mousedown', (e) => {
+    if (e.button === 0 && !e.target.closest('button')) hdrPress = { x: e.screenX, y: e.screenY };
+});
+window.addEventListener('mousemove', (e) => {
+    if (hdrPress && (Math.abs(e.screenX - hdrPress.x) > 3 || Math.abs(e.screenY - hdrPress.y) > 3)) {
+        hdrPress = null;
+        invoke('start_drag', { label: 'main' }).catch(() => {});
+    }
+});
+window.addEventListener('mouseup', () => { hdrPress = null; });
 $('#btn-refresh').addEventListener('click', () => refresh(true));
 $('#btn-web').addEventListener('click', () => invoke('open_url', { url: settings.base }));
 

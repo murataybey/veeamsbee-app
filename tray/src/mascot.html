@@ -365,17 +365,19 @@ chatbot.addEventListener('click', () => {
 // Çift tık: durum penceresini aç
 chatbot.addEventListener('dblclick', () => invoke('toggle_main'));
 
-// Karakteri her yerinden sürükleyerek taşı: basılı tutup 5px'ten fazla çekince
-// pencere sürüklemesi başlar; kısa tıklama numara olarak kalır
-const appWindow = window.__TAURI__.window.getCurrentWindow();
+// Karakteri her yerinden sürükleyerek taşı: basılı tutup 3px'ten fazla çekince
+// Rust tarafı pencere sürüklemesini başlatır; kısa tıklama numara olarak kalır.
+// (Sahne animasyonları karakteri kaydırdığı için tutma alanı tüm penceredir.)
+const stage = document.getElementById('stage');
 let pressAt = null;
-chatbot.addEventListener('mousedown', (e) => {
-    if (e.button === 0) pressAt = { x: e.screenX, y: e.screenY };
+stage.addEventListener('mousedown', (e) => {
+    if (e.button === 0 && !e.target.closest('.ctl')) pressAt = { x: e.screenX, y: e.screenY };
 });
 window.addEventListener('mousemove', (e) => {
-    if (pressAt && (Math.abs(e.screenX - pressAt.x) > 5 || Math.abs(e.screenY - pressAt.y) > 5)) {
+    if (pressAt && (Math.abs(e.screenX - pressAt.x) > 3 || Math.abs(e.screenY - pressAt.y) > 3)) {
         pressAt = null;
-        appWindow.startDragging().catch(() => {});
+        invoke('start_drag', { label: 'mascot' })
+            .catch((err) => say('Taşıma hatası: ' + err, 'critical'));
     }
 });
 window.addEventListener('mouseup', () => { pressAt = null; });

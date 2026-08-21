@@ -198,6 +198,15 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
+/// Pencere sürüklemeyi Rust tarafında başlat — JS izin katmanından bağımsız, garantili yol
+#[tauri::command]
+fn start_drag(app: AppHandle, label: String) -> Result<(), String> {
+    let win = app
+        .get_webview_window(&label)
+        .ok_or_else(|| format!("pencere bulunamadı: {label}"))?;
+    win.start_dragging().map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn mascot_show(app: AppHandle) {
     show_mascot(&app);
@@ -291,6 +300,7 @@ pub fn run() {
             hide_window,
             toggle_main,
             quit_app,
+            start_drag,
             mascot_show,
             mascot_hide,
             mascot_say
