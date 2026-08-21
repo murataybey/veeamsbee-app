@@ -27,8 +27,44 @@ fn toggle_window(app: &AppHandle) {
     }
 }
 
-// Karakter penceresini ekranın sağ alt köşesine (görev çubuğunun üstüne) yerleştir
+// Karakterin konumu kalıcıdır: kullanıcı sürükleyince kaydedilir, açılışta geri yüklenir
+fn mascot_pos_file(app: &AppHandle) -> Option<std::path::PathBuf> {
+    let dir = app.path().app_config_dir().ok()?;
+    let _ = std::fs::create_dir_all(&dir);
+    Some(dir.join("mascot-pos.json"))
+}
+
+fn save_mascot_pos(app: &AppHandle, x: i32, y: i32) {
+    if let Some(f) = mascot_pos_file(app) {
+        let _ = std::fs::write(f, format!("{{\"x\":{x},\"y\":{y}}}"));
+    }
+}
+
+fn load_mascot_pos(app: &AppHandle) -> Option<(i32, i32)> {
+    let s = std::fs::read_to_string(mascot_pos_file(app)?).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&s).ok()?;
+    Some((v["x"].as_i64()? as i32, v["y"].as_i64()? as i32))
+}
+
+// Karakter penceresini yerleştir: kayıtlı konum ekrandaysa oraya, yoksa sağ alt köşeye
 fn position_mascot(win: &tauri::WebviewWindow) {
+    if let (Some((x, y)), Ok(size)) = (load_mascot_pos(win.app_handle()), win.outer_size()) {
+        // Kayıtlı konum bir monitörün içinde mi? (monitör sökülmüş olabilir)
+        if let Ok(monitors) = win.available_monitors() {
+            let on_screen = monitors.iter().any(|m| {
+                let mp = m.position();
+                let ms = m.size();
+                x >= mp.x - 50
+                    && x + (size.width as i32) <= mp.x + ms.width as i32 + 100
+                    && y >= mp.y - 50
+                    && y <= mp.y + ms.height as i32 - 40
+            });
+            if on_screen {
+                let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+                return;
+            }
+        }
+    }
     let mon = win
         .current_monitor()
         .ok()
@@ -218,16 +254,16 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Popup davranışı: odak kaybedince gizlen
-            if window.label() == "main" {
-                if let tauri::WindowEvent::Focused(false) = event {
-                    let _ = window.hide();
-                }
-            }
             // Pencereler kapatılmaz, gizlenir — uygulama tepside yaşar
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
+            }
+            // Karakter taşınınca konumunu hatırla
+            if window.label() == "mascot" {
+                if let tauri::WindowEvent::Moved(pos) = event {
+                    save_mascot_pos(window.app_handle(), pos.x, pos.y);
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![

@@ -23,7 +23,6 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; user-select: none; -webki
   text-align: center; cursor: pointer;
 }
 .ctl:hover { background: #38b6e8; color: #0b1220; }
-.ctl.drag { cursor: grab; }
 
 /* Konuşma balonu */
 #bubble {
@@ -181,11 +180,10 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; user-select: none; -webki
 <body>
 <div id="stage">
   <div id="controls">
-    <div class="ctl drag" data-tauri-drag-region title="Taşı">⠿</div>
     <div class="ctl" id="btn-hide" title="Karakteri gizle (tepsi menüsünden geri açılır)">✕</div>
   </div>
   <div id="bubble"></div>
-  <div id="chatbot" title="Ben Sbee! Tıkla — çift tık: durum penceresi">
+  <div id="chatbot" title="Ben Sbee! Tıkla: numara · Çift tık: durum · Tutup sürükle: taşı">
     <div class="bot-body">
       <svg viewBox="0 0 260 220" xmlns="http://www.w3.org/2000/svg">
         <defs>
@@ -366,6 +364,21 @@ chatbot.addEventListener('click', () => {
 
 // Çift tık: durum penceresini aç
 chatbot.addEventListener('dblclick', () => invoke('toggle_main'));
+
+// Karakteri her yerinden sürükleyerek taşı: basılı tutup 5px'ten fazla çekince
+// pencere sürüklemesi başlar; kısa tıklama numara olarak kalır
+const appWindow = window.__TAURI__.window.getCurrentWindow();
+let pressAt = null;
+chatbot.addEventListener('mousedown', (e) => {
+    if (e.button === 0) pressAt = { x: e.screenX, y: e.screenY };
+});
+window.addEventListener('mousemove', (e) => {
+    if (pressAt && (Math.abs(e.screenX - pressAt.x) > 5 || Math.abs(e.screenY - pressAt.y) > 5)) {
+        pressAt = null;
+        appWindow.startDragging().catch(() => {});
+    }
+});
+window.addEventListener('mouseup', () => { pressAt = null; });
 
 // Gizle düğmesi — tepsi menüsündeki "Karakteri Göster" ile geri açılır
 document.getElementById('btn-hide').addEventListener('click', () => invoke('mascot_hide'));
