@@ -11,16 +11,33 @@ use tauri::{
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_notification::NotificationExt as _;
 use tauri_plugin_opener::OpenerExt as _;
-use tauri_plugin_positioner::{Position, WindowExt as _};
 
 const TRAY_ID: &str = "sbee-tray";
+
+// Durum penceresini sağ alt köşeye, TAMAMI görünür olacak şekilde yerleştir
+// (positioner'ın tray-hizalı konumu pencereyi görev çubuğunun altına, ekran dışına itiyordu)
+fn position_main(win: &tauri::WebviewWindow) {
+    let mon = win
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| win.primary_monitor().ok().flatten());
+    if let (Some(mon), Ok(size)) = (mon, win.outer_size()) {
+        let sf = mon.scale_factor();
+        let ms = mon.size();
+        let mp = mon.position();
+        let x = mp.x + ms.width as i32 - size.width as i32 - (12.0 * sf) as i32;
+        let y = mp.y + ms.height as i32 - size.height as i32 - (56.0 * sf) as i32;
+        let _ = win.set_position(tauri::PhysicalPosition::new(x.max(mp.x), y.max(mp.y)));
+    }
+}
 
 fn toggle_window(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
         if win.is_visible().unwrap_or(false) {
             let _ = win.hide();
         } else {
-            let _ = win.as_ref().window().move_window(Position::TrayBottomCenter);
+            position_main(&win);
             let _ = win.show();
             let _ = win.set_focus();
         }
@@ -207,7 +224,6 @@ pub fn run() {
                 let _ = win.set_focus();
             }
         }))
-        .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         // ÖNEMLİ: pencereler oluşmadan kaydolmalı; setup içinde kaydetmek
@@ -240,7 +256,6 @@ pub fn run() {
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
-                    tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,

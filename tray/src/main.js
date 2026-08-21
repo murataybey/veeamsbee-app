@@ -49,6 +49,47 @@ function fmtTime(iso) {
 }
 const LEVELS = { ok: 'Sağlıklı', warning: 'Uyarı', critical: 'Sorun var' };
 
+// Seçilen duruma göre job listesi: session verisi (hata mesajlı) + job durumları birleşir
+function jobItems(s, filter) {
+    const list = s.jobList || [];
+    const base = (n) => String(n).replace(/\s*\(.*\)$/, '');
+    if (filter === 'all') return list;
+    if (filter === 'success') return list.filter((j) => j.lastResult === 'Success');
+    const sess = filter === 'failed' ? (s.failedJobs || []) : (s.warningJobs || []);
+    const want = filter === 'failed' ? 'Failed' : 'Warning';
+    const items = sess.map((f) => ({ name: f.name, lastResult: want, lastRun: f.endTime, message: f.message }));
+    for (const j of list) {
+        if (j.lastResult === want && !items.some((i) => base(i.name) === j.name)) items.push(j);
+    }
+    return items;
+}
+
+function renderJobDetail(root, s, filter) {
+    root.replaceChildren();
+    if (!filter) return;
+    const items = jobItems(s, filter);
+    if (!items.length) {
+        root.append(el('div', 'muted center', 'Bu durumda job yok.'));
+        return;
+    }
+    for (const j of items) {
+        const it = el('div', 'job-item');
+        const head = el('div', 'ji-head');
+        const res = j.lastResult || '';
+        head.append(el('span', 'dot ' + (res === 'Failed' ? 'critical' : res === 'Warning' ? 'warning' : res === 'Success' ? 'ok' : 'gray')));
+        head.append(el('b', null, j.name));
+        head.append(el('span', 'ji-time', fmtTime(j.lastRun)));
+        it.append(head);
+        const sub = [];
+        if (j.type) sub.push(j.type);
+        if (j.status) sub.push('Durum: ' + j.status);
+        if (j.nextRun) sub.push('Sonraki: ' + fmtTime(j.nextRun));
+        if (sub.length) it.append(el('div', 'ji-sub', sub.join(' · ')));
+        if (j.message) it.append(el('div', 'ji-msg' + (res === 'Failed' ? ' err' : ''), j.message));
+        root.append(it);
+    }
+}
+
 // --- Durum sekmesi ---
 function renderStatus(st) {
     const root = $('#status-content');
@@ -90,19 +131,30 @@ function renderStatus(st) {
             continue;
         }
 
+        // Durum kutuları tıklanabilir: ilgili job'ları hata mesajlarıyla listeler
         const row = el('div', 'stat-row');
-        const mk = (cls, num, lbl) => {
+        const detail = el('div', 'job-detail');
+        let curFilter = null;
+        const applyFilter = (f) => {
+            curFilter = curFilter === f ? null : f;
+            row.querySelectorAll('.stat').forEach((t) => t.classList.toggle('sel', t.dataset.f === curFilter));
+            renderJobDetail(detail, s, curFilter);
+        };
+        const mk = (cls, num, lbl, filter) => {
             const d = el('div', 'stat ' + cls);
+            d.dataset.f = filter;
+            d.title = 'Tıkla: bu durumdaki job\'ları göster';
             d.append(el('b', null, String(num)), el('span', null, lbl));
+            d.addEventListener('click', () => applyFilter(filter));
             return d;
         };
         row.append(
-            mk('s-ok', s.sessions?.success ?? 0, 'Başarılı'),
-            mk('s-warn', s.sessions?.warning ?? 0, 'Uyarı'),
-            mk('s-fail', s.sessions?.failed ?? 0, 'Başarısız'),
-            mk('', `${s.jobs?.total ?? 0}`, `Job (${s.jobs?.disabled ?? 0} kapalı)`),
+            mk('s-ok', s.sessions?.success ?? 0, 'Başarılı', 'success'),
+            mk('s-warn', s.sessions?.warning ?? 0, 'Uyarı', 'warning'),
+            mk('s-fail', s.sessions?.failed ?? 0, 'Başarısız', 'failed'),
+            mk('', `${s.jobs?.total ?? 0}`, `Job (${s.jobs?.disabled ?? 0} kapalı)`, 'all'),
         );
-        card.append(row);
+        card.append(row, detail);
 
         for (const r of s.repositories || []) {
             if (r.usedPct == null) continue;
