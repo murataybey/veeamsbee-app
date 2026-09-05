@@ -1,0 +1,101 @@
+name: 'tray-release'
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'tray-v*'
+
+jobs:
+  # Release'i önce tek bir iş oluşturur; matris işleri yalnızca paket yükler.
+  # (4 işin aynı anda release oluşturmaya çalışması 'already_exists' yarışına yol açıyordu)
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: create GitHub release for tag
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "Sbee Tray v${TAG#tray-v}" \
+              --notes "Sbee tray uygulaması — kurulum paketleri ektedir. Windows: .msi/.exe, macOS: .dmg, Linux: .AppImage/.deb"
+
+  build-tray:
+    needs: create-release
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'windows-latest'
+            args: ''
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+          - platform: 'macos-latest'
+            args: '--target x86_64-apple-darwin'
+          - platform: 'ubuntu-22.04'
+            args: ''
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install dependencies (ubuntu only)
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './tray/src-tauri -> target'
+
+      - name: install frontend dependencies
+        working-directory: tray
+        run: npm install
+
+      - name: generate app icons
+        working-directory: tray
+        run: npx tauri icon src-tauri/app-icon.png
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: tray
+          tagName: tray-v__VERSION__
+          releaseName: 'Sbee Tray v__VERSION__'
+          releaseBody: 'Sbee tray uygulaması — kurulum paketleri ektedir. Windows: .msi/.exe, macOS: .dmg, Linux: .AppImage/.deb'
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      # Release oluşturulamasa bile paketler kaybolmasın
+      - name: upload bundles as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbee-bundles-${{ strategy.job-index }}
+          path: |
+            tray/src-tauri/target/**/bundle/msi/*.msi
+            tray/src-tauri/target/**/bundle/nsis/*.exe
+            tray/src-tauri/target/**/bundle/dmg/*.dmg
+            tray/src-tauri/target/**/bundle/appimage/*.AppImage
+            tray/src-tauri/target/**/bundle/deb/*.deb
+          if-no-files-found: ignore

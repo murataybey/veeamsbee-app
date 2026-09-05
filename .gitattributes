@@ -1,0 +1,10 @@
+# Kabuk betikleri Windows'ta klonlansa bile LF kalmalı (Linux'ta çalışacaklar)
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.js text eol=lf
+*.html text eol=lf
+*.md text eol=lf
+*.png binary
+*.jpg binary

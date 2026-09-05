@@ -1,0 +1,10 @@
+# Çalışma zamanı verileri ve sırlar — asla commit edilmez
+.env
+data/
+*.log
+node_modules/
+
+# Tray uygulaması derleme çıktıları (ikonlar CI'da üretilir)
+tray/src-tauri/target/
+tray/src-tauri/gen/
+tray/src-tauri/icons/
