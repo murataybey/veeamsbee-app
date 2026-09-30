@@ -7,6 +7,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { startMonitor, forcePoll, getStatus, getEvents, summaryForDigest, customerReport, suggestNames } from './monitor.js';
 import { reportToDocx, reportToPdf } from './report-export.js';
+import { mailConfigured, listMailReports, addMailReport, deleteMailReport, sendReportMail, startMailScheduler } from './mailer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -525,6 +526,35 @@ app.get('/api/report/customer.pdf', async (req, res) => {
     }
 });
 
+// --- Zamanlanmış e-posta raporları ---
+app.get('/api/mailreports', (_req, res) => {
+    res.json({ configured: mailConfigured(), entries: listMailReports() });
+});
+
+app.post('/api/mailreports', (req, res) => {
+    try {
+        res.json({ ok: true, entry: addMailReport(req.body || {}) });
+    } catch (err) {
+        res.status(400).json({ error: String(err?.message || err) });
+    }
+});
+
+app.delete('/api/mailreports/:id', (req, res) => {
+    if (!deleteMailReport(req.params.id)) return res.status(404).json({ error: 'Kayıt bulunamadı.' });
+    res.json({ ok: true });
+});
+
+app.post('/api/mailreports/:id/test', async (req, res) => {
+    const entry = listMailReports().find((e) => e.id === req.params.id);
+    if (!entry) return res.status(404).json({ error: 'Kayıt bulunamadı.' });
+    try {
+        await sendReportMail(entry);
+        res.json({ ok: true });
+    } catch (err) {
+        res.status(502).json({ error: String(err?.message || err) });
+    }
+});
+
 app.get('/api/report/suggest', (req, res) => {
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
     res.json(q ? suggestNames(q) : []);
@@ -675,4 +705,5 @@ app.listen(PORT, '0.0.0.0', () => {
     // Warm up the MCP connection so the first question doesn't pay the startup cost
     getClient().catch((err) => console.error('MCP warmup failed:', err?.message || err));
     startMonitor(() => registry.servers);
+    startMailScheduler();
 });

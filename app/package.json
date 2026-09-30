@@ -10,6 +10,7 @@
         "dompurify": "^3.2.4",
         "express": "^4.21.2",
         "marked": "^15.0.7",
+        "nodemailer": "^10.0.13",
         "pdfkit": "^0.20.1"
     }
 }

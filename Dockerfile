@@ -25,7 +25,7 @@ WORKDIR /web
 # PDF çıktısında Türkçe karakterler için TTF font
 RUN apk add --no-cache ttf-dejavu
 COPY --from=web-builder /web/node_modules ./node_modules
-COPY app/server.js app/monitor.js app/report-export.js ./
+COPY app/server.js app/monitor.js app/report-export.js app/mailer.js ./
 COPY app/public ./public
 
 RUN addgroup -g 1001 -S appgroup && adduser -u 1001 -S appuser -G appgroup && \
