@@ -175,16 +175,22 @@ export async function reportToDocx(rep) {
         if (!P || !P.vms.length) continue;
         const sm = P.summary;
         children.push(para(run(`Koruma Durumu — son ${P.days} gün (${s.server})`, { size: 24, bold: true }), { before: 300, after: 60 }));
+        const showBw = rep.types !== 'replica';
+        const showRw = rep.types !== 'backup';
         children.push(para([
-            run(`${sm.total} aktif makine   ·   Yedek: `, { size: 18 }),
-            run(`${sm.backupOk} güncel`, { size: 18, bold: true, color: COLOR.ok }),
-            run(' / ', { size: 18, color: COLOR.gray }),
-            run(`${sm.backupMiss} eksik`, { size: 18, bold: true, color: COLOR.fail }),
-            run('   ·   Replika: ', { size: 18 }),
-            run(`${sm.replicaOk} güncel`, { size: 18, bold: true, color: COLOR.ok }),
-            run(' / ', { size: 18, color: COLOR.gray }),
-            run(`${sm.replicaMiss} eksik`, { size: 18, bold: true, color: COLOR.fail }),
-            run(` / ${sm.noReplica} replikasız`, { size: 18, color: COLOR.gray }),
+            run(`${sm.total} aktif makine` + (showBw ? '   ·   Yedek: ' : ''), { size: 18 }),
+            ...(showBw ? [
+                run(`${sm.backupOk} güncel`, { size: 18, bold: true, color: COLOR.ok }),
+                run(' / ', { size: 18, color: COLOR.gray }),
+                run(`${sm.backupMiss} eksik`, { size: 18, bold: true, color: COLOR.fail }),
+            ] : []),
+            ...(showRw ? [
+                run('   ·   Replika: ', { size: 18 }),
+                run(`${sm.replicaOk} güncel`, { size: 18, bold: true, color: COLOR.ok }),
+                run(' / ', { size: 18, color: COLOR.gray }),
+                run(`${sm.replicaMiss} eksik`, { size: 18, bold: true, color: COLOR.fail }),
+                run(` / ${sm.noReplica} replikasız`, { size: 18, color: COLOR.gray }),
+            ] : []),
         ], { after: 80 }));
         const pw = [3300, 2000, 800, 2000, 1538];
         const phead = ['Makine', 'Son Yedek', 'Yedek', 'Son Replika', 'Replika'];
@@ -474,16 +480,16 @@ export function reportToPdf(rep, stream) {
         if (!P || !P.vms.length) continue;
         section(`Koruma Durumu — son ${P.days} gün (${s.server})`);
         const sm = P.summary;
-        doc.font(F).fontSize(9).fillColor('#333333')
-            .text(`${sm.total} aktif makine   ·   Yedek: `, L, doc.y, { continued: true })
-            .fillColor(hx(COLOR.ok)).text(`${sm.backupOk} güncel`, { continued: true })
-            .fillColor('#666666').text(' / ', { continued: true })
-            .fillColor(hx(COLOR.fail)).text(`${sm.backupMiss} eksik`, { continued: true })
-            .fillColor('#333333').text('   ·   Replika: ', { continued: true })
-            .fillColor(hx(COLOR.ok)).text(`${sm.replicaOk} güncel`, { continued: true })
-            .fillColor('#666666').text(' / ', { continued: true })
-            .fillColor(hx(COLOR.fail)).text(`${sm.replicaMiss} eksik`, { continued: true })
-            .fillColor('#666666').text(` / ${sm.noReplica} replikasız`);
+        const showB = rep.types !== 'replica';
+        const showR = rep.types !== 'backup';
+        const seg = [{ t: `${sm.total} aktif makine`, c: '#333333' }];
+        if (showB) seg.push({ t: '   ·   Yedek: ', c: '#333333' }, { t: `${sm.backupOk} güncel`, c: hx(COLOR.ok) }, { t: ' / ', c: '#666666' }, { t: `${sm.backupMiss} eksik`, c: hx(COLOR.fail) });
+        if (showR) seg.push({ t: '   ·   Replika: ', c: '#333333' }, { t: `${sm.replicaOk} güncel`, c: hx(COLOR.ok) }, { t: ' / ', c: '#666666' }, { t: `${sm.replicaMiss} eksik`, c: hx(COLOR.fail) }, { t: ` / ${sm.noReplica} replikasız`, c: '#666666' });
+        seg.forEach((p, i) => {
+            doc.font(F).fontSize(9).fillColor(p.c);
+            if (i === 0) doc.text(p.t, L, doc.y, { continued: seg.length > 1 });
+            else doc.text(p.t, { continued: i < seg.length - 1 });
+        });
         doc.moveDown(0.5);
 
         // Günlük çubuklar: yeşil = yedek noktaları, mavi = replika noktaları
@@ -523,13 +529,15 @@ export function reportToPdf(rep, stream) {
         const rows = [...P.vms].sort((a, b) =>
             (a.backupOk === b.backupOk ? (a.replicaOk === false ? -1 : 0) - (b.replicaOk === false ? -1 : 0) : (a.backupOk ? 1 : -1))
             || a.name.localeCompare(b.name, 'tr'));
-        const pcols = [
+        let pcols = [
             { h: 'Makine', w: 0.34, get: (r) => r.name, color: () => '#222222' },
-            { h: 'Son Yedek', w: 0.21, get: (r) => fmt(r.lastBackup), color: (r) => (r.backupOk ? '#222222' : hx(COLOR.fail)) },
-            { h: 'Yedek', w: 0.08, get: (r) => (r.backupOk ? '✓' : '✗'), color: (r) => (r.backupOk ? hx(COLOR.ok) : hx(COLOR.fail)), align: 'center', bold: true },
-            { h: 'Son Replika', w: 0.21, get: (r) => fmt(r.lastReplica), color: (r) => (r.replicaOk === false ? hx(COLOR.fail) : '#222222') },
-            { h: 'Replika', w: 0.16, get: (r) => (r.replicaOk === null ? '—' : r.replicaOk ? '✓' : '✗'), color: (r) => (r.replicaOk === null ? '#9AA0A6' : r.replicaOk ? hx(COLOR.ok) : hx(COLOR.fail)), align: 'center', bold: true },
-        ];
+            { k: 'b', h: 'Son Yedek', w: 0.21, get: (r) => fmt(r.lastBackup), color: (r) => (r.backupOk ? '#222222' : hx(COLOR.fail)) },
+            { k: 'b', h: 'Yedek', w: 0.08, get: (r) => (r.backupOk ? '✓' : '✗'), color: (r) => (r.backupOk ? hx(COLOR.ok) : hx(COLOR.fail)), align: 'center', bold: true },
+            { k: 'r', h: 'Son Replika', w: 0.21, get: (r) => fmt(r.lastReplica), color: (r) => (r.replicaOk === false ? hx(COLOR.fail) : '#222222') },
+            { k: 'r', h: 'Replika', w: 0.16, get: (r) => (r.replicaOk === null ? '—' : r.replicaOk ? '✓' : '✗'), color: (r) => (r.replicaOk === null ? '#9AA0A6' : r.replicaOk ? hx(COLOR.ok) : hx(COLOR.fail)), align: 'center', bold: true },
+        ].filter((c) => (c.k === 'b' ? showB : c.k === 'r' ? showR : true));
+        const wsum = pcols.reduce((a, c) => a + c.w, 0);
+        pcols = pcols.map((c) => ({ ...c, w: c.w / wsum }));
         let py = doc.y;
         doc.moveTo(L, py - 1).lineTo(R, py - 1).strokeColor(hx(COLOR.line)).lineWidth(0.8).stroke();
         let pcx = L;

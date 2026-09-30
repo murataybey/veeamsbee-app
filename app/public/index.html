@@ -618,7 +618,18 @@
         <div id="serverList"></div>
       </section>
       <section id="tabMail" hidden>
-        <h2>Zamanlanmış E-posta Raporları</h2>
+        <h2>SMTP Ayarları</h2>
+        <form id="smtpForm" class="form-grid">
+          <div><label for="sHost">SMTP sunucusu</label><input type="text" id="sHost" placeholder="örn. smtp.office365.com"></div>
+          <div><label for="sPort">Port</label><input type="number" id="sPort" value="587"></div>
+          <div><label for="sUser">Kullanıcı (boşsa kimlik doğrulamasız)</label><input type="text" id="sUser" autocomplete="off"></div>
+          <div><label for="sPass">Parola</label><input type="password" id="sPass" autocomplete="new-password" placeholder="değiştirmek için yazın"></div>
+          <div><label for="sFrom">Gönderen adres</label><input type="text" id="sFrom" placeholder="raporlar@sirket.com"></div>
+          <label class="form-check"><input type="checkbox" id="sSecure"> SSL (465) — 587 STARTTLS için işaretsiz bırakın</label>
+          <div><button type="submit" class="btn primary">SMTP Kaydet</button></div>
+        </form>
+        <div class="form-msg" id="smtpMsg"></div>
+        <h2 style="margin-top:20px">Zamanlanmış Raporlar</h2>
         <div id="mailStatus" class="form-msg"></div>
         <div id="mailList"></div>
         <h2 style="margin-top:20px">Yeni Zamanlama</h2>
@@ -630,6 +641,13 @@
               <option value="3">Son 3 gün</option>
               <option value="7" selected>Son 7 gün</option>
               <option value="30">Son 30 gün</option>
+            </select>
+          </div>
+          <div><label for="mTypes">Kapsam</label>
+            <select id="mTypes">
+              <option value="all" selected>Backup + Replika</option>
+              <option value="backup">Yalnız Backup</option>
+              <option value="replica">Yalnız Replika</option>
             </select>
           </div>
           <div><label for="mHour">Gönderim saati</label>
@@ -1221,7 +1239,7 @@
     document.getElementById('tabAdd').hidden = tabId !== 'tabAdd';
     document.getElementById('tabMail').hidden = tabId !== 'tabMail';
     if (tabId === 'tabServers') renderServers();
-    if (tabId === 'tabMail') renderMailReports();
+    if (tabId === 'tabMail') { loadSmtpConfig(); renderMailReports(); }
   }
 
   function openSettings() {
@@ -1296,15 +1314,21 @@
         sm.total + ' aktif makine · Yedek: ' + sm.backupOk + ' güncel / ' + sm.backupMiss + ' eksik · Replika: ' + sm.replicaOk + ' güncel / ' + sm.replicaMiss + ' eksik / ' + sm.noReplica + ' replikasız'));
       const tbl = el('table', 'rep-vms');
       const sorted = [...P.vms].sort((a, b) => (a.backupOk === b.backupOk ? 0 : a.backupOk ? 1 : -1) || a.name.localeCompare(b.name, 'tr'));
+      const showB = rep.types !== 'replica';
+      const showR = rep.types !== 'backup';
       for (const r of sorted) {
         const tr = el('tr');
         tr.appendChild(el('td', undefined, r.name));
-        const tdB = el('td', undefined, (r.backupOk ? '✓ ' : '✗ ') + repTime(r.lastBackup));
-        tdB.style.color = r.backupOk ? 'var(--accent)' : 'var(--red)';
-        tr.appendChild(tdB);
-        const tdR = el('td', undefined, r.replicaOk === null ? '— replikasız' : (r.replicaOk ? '✓ ' : '✗ ') + repTime(r.lastReplica));
-        tdR.style.color = r.replicaOk === null ? 'var(--muted)' : (r.replicaOk ? 'var(--accent)' : 'var(--red)');
-        tr.appendChild(tdR);
+        if (showB) {
+          const tdB = el('td', undefined, (r.backupOk ? '✓ ' : '✗ ') + repTime(r.lastBackup));
+          tdB.style.color = r.backupOk ? 'var(--accent)' : 'var(--red)';
+          tr.appendChild(tdB);
+        }
+        if (showR) {
+          const tdR = el('td', undefined, r.replicaOk === null ? '— replikasız' : (r.replicaOk ? '✓ ' : '✗ ') + repTime(r.lastReplica));
+          tdR.style.color = r.replicaOk === null ? 'var(--muted)' : (r.replicaOk ? 'var(--accent)' : 'var(--red)');
+          tr.appendChild(tdR);
+        }
         tbl.appendChild(tr);
       }
       card.appendChild(tbl);
@@ -1537,6 +1561,47 @@
     mHourSel.appendChild(o);
   }
 
+  async function loadSmtpConfig() {
+    try {
+      const r = await fetch('/api/mailconfig');
+      const c = await r.json();
+      document.getElementById('sHost').value = c.host || '';
+      document.getElementById('sPort').value = c.port || 587;
+      document.getElementById('sUser').value = c.user || '';
+      document.getElementById('sFrom').value = c.from || '';
+      document.getElementById('sSecure').checked = !!c.secure;
+      document.getElementById('sPass').placeholder = c.hasPass ? 'kayıtlı — değiştirmek için yazın' : 'değiştirmek için yazın';
+    } catch { /* yoksay */ }
+  }
+
+  document.getElementById('smtpForm').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const msg = document.getElementById('smtpMsg');
+    try {
+      const r = await fetch('/api/mailconfig', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          host: document.getElementById('sHost').value,
+          port: Number(document.getElementById('sPort').value),
+          user: document.getElementById('sUser').value,
+          pass: document.getElementById('sPass').value,
+          secure: document.getElementById('sSecure').checked,
+          from: document.getElementById('sFrom').value,
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      document.getElementById('sPass').value = '';
+      msg.textContent = d.configured ? 'Kaydedildi — gönderime hazır ✓' : 'Kaydedildi (sunucu ve gönderen adres olmadan gönderim yapılamaz)';
+      msg.style.color = d.configured ? 'var(--accent)' : 'var(--amber)';
+      renderMailReports();
+    } catch (err) {
+      msg.textContent = 'Kaydedilemedi: ' + err.message;
+      msg.style.color = 'var(--red)';
+    }
+  });
+
   async function renderMailReports() {
     const list = document.getElementById('mailList');
     const status = document.getElementById('mailStatus');
@@ -1546,7 +1611,7 @@
       const d = await r.json();
       status.textContent = d.configured
         ? '✓ SMTP yapılandırılmış — zamanlamalar aktif.'
-        : '⚠ SMTP yapılandırılmamış: sunucudaki .env dosyasına SMTP_HOST, MAIL_FROM (gerekirse SMTP_PORT/SMTP_USER/SMTP_PASS) ekleyip konteyneri yeniden başlatın. Zamanlamalar kaydedilir ama gönderim yapılamaz.';
+        : '⚠ SMTP yapılandırılmamış: yukarıdaki formu doldurup kaydedin. Zamanlamalar kaydedilir ama gönderim yapılamaz.';
       status.style.color = d.configured ? 'var(--accent)' : 'var(--amber)';
       list.textContent = '';
       if (!d.entries.length) {
@@ -1559,7 +1624,8 @@
         const info = el('div');
         info.style.flex = '1';
         const t = el('div');
-        t.innerHTML = '<b>' + e.query + '</b> — son ' + e.days + ' gün · her gün ' + String(e.hour).padStart(2, '0') + ':00';
+        const typeLbl = e.types === 'backup' ? 'Yalnız Backup' : e.types === 'replica' ? 'Yalnız Replika' : 'Backup + Replika';
+        t.innerHTML = '<b>' + e.query + '</b> — ' + typeLbl + ' · son ' + e.days + ' gün · her gün ' + String(e.hour).padStart(2, '0') + ':00';
         const sub = el('div');
         sub.style.cssText = 'font-size:12px;color:var(--muted)';
         sub.textContent = e.to.join(', ') + (e.lastResult ? ' · ' + e.lastResult : ' · henüz gönderilmedi');
@@ -1608,6 +1674,7 @@
           query: document.getElementById('mQuery').value,
           days: Number(document.getElementById('mDays').value),
           hour: Number(mHourSel.value),
+          types: document.getElementById('mTypes').value,
           to: document.getElementById('mTo').value,
         }),
       });

@@ -9,6 +9,43 @@ import { customerReport } from './monitor.js';
 import { reportToPdf } from './report-export.js';
 
 const MAIL_FILE = process.env.MAILREPORTS_FILE || '/web/data/mailreports.json';
+const MAILCFG_FILE = process.env.MAILCONFIG_FILE || '/web/data/mailconfig.json';
+
+let mailCfg = {};
+try {
+    mailCfg = JSON.parse(fs.readFileSync(MAILCFG_FILE, 'utf8')) || {};
+} catch { /* ilk çalıştırma */ }
+
+function cfgVal(k, envK) {
+    return (mailCfg[k] !== undefined && mailCfg[k] !== '') ? mailCfg[k] : process.env[envK];
+}
+
+// Arayüze dönen görünüm — parola asla dönmez
+export function getMailConfig() {
+    return {
+        host: cfgVal('host', 'SMTP_HOST') || '',
+        port: Number(cfgVal('port', 'SMTP_PORT') || 587),
+        user: cfgVal('user', 'SMTP_USER') || '',
+        hasPass: Boolean(cfgVal('pass', 'SMTP_PASS')),
+        secure: String(cfgVal('secure', 'SMTP_SECURE')) === 'true',
+        from: cfgVal('from', 'MAIL_FROM') || '',
+        configured: Boolean((cfgVal('host', 'SMTP_HOST') || '') && (cfgVal('from', 'MAIL_FROM') || '')),
+    };
+}
+
+export function setMailConfig({ host, port, user, pass, secure, from }) {
+    mailCfg = {
+        host: String(host || '').trim(),
+        port: Number(port) || 587,
+        user: String(user || '').trim(),
+        // Boş bırakılan parola alanı mevcut parolayı korur
+        pass: pass ? String(pass) : (mailCfg.pass || ''),
+        secure: secure === true || secure === 'true',
+        from: String(from || '').trim(),
+    };
+    fs.mkdirSync(path.dirname(MAILCFG_FILE), { recursive: true });
+    fs.writeFileSync(MAILCFG_FILE, JSON.stringify(mailCfg, null, 2), { mode: 0o600 });
+}
 
 let entries = [];
 try {
@@ -26,17 +63,16 @@ function persist() {
 }
 
 export function mailConfigured() {
-    return Boolean(process.env.SMTP_HOST && process.env.MAIL_FROM);
+    return getMailConfig().configured;
 }
 
 function transport() {
+    const c = getMailConfig();
     return nodemailer.createTransport({
-        host: process.env.SMTP_HOST,
-        port: Number(process.env.SMTP_PORT || 587),
-        secure: process.env.SMTP_SECURE === 'true',
-        auth: process.env.SMTP_USER
-            ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS || '' }
-            : undefined,
+        host: c.host,
+        port: c.port,
+        secure: c.secure,
+        auth: c.user ? { user: c.user, pass: String(cfgVal('pass', 'SMTP_PASS') || '') } : undefined,
         tls: { rejectUnauthorized: false },
     });
 }
@@ -45,13 +81,14 @@ export function listMailReports() {
     return entries;
 }
 
-export function addMailReport({ query, days, to, hour }) {
+export function addMailReport({ query, days, to, hour, types }) {
     const entry = {
         id: 'mr-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
         query: String(query).trim(),
         days: Number(days) >= 1 && Number(days) <= 90 ? Number(days) : 7,
         to: (Array.isArray(to) ? to : String(to).split(/[,;\s]+/)).map((s) => s.trim()).filter(Boolean),
         hour: Number(hour) >= 0 && Number(hour) <= 23 ? Number(hour) : 8,
+        types: ['backup', 'replica'].includes(types) ? types : 'all',
         enabled: true,
         lastSentDay: null,
         lastResult: null,
@@ -94,9 +131,9 @@ function pdfBuffer(rep) {
 
 export async function sendReportMail(entry) {
     if (!mailConfigured()) {
-        throw new Error('SMTP yapılandırılmamış — sunucudaki .env dosyasına SMTP_HOST, MAIL_FROM (gerekirse SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_SECURE) ekleyip yeniden başlatın.');
+        throw new Error('SMTP yapılandırılmamış — Ayarlar → E-posta Raporları sekmesindeki SMTP formunu doldurup kaydedin.');
     }
-    const rep = await customerReport(entry.query, entry.days || null);
+    const rep = await customerReport(entry.query, entry.days || null, entry.types || 'all');
     if (rep.servers.length && rep.servers.every((s) => s.error)) {
         throw new Error('Hiçbir Veeam sunucusuna erişilemedi; rapor gönderilmedi.');
     }
@@ -108,10 +145,13 @@ export async function sendReportMail(entry) {
         for (const k of Object.keys(g)) g[k] += s.totals?.[k] || 0;
         if (s.protection?.vms?.length) prot = s.protection;
     }
+    const showB = (entry.types || 'all') !== 'replica';
+    const showR = (entry.types || 'all') !== 'backup';
     const protHtml = prot ? `<p><b>Koruma durumu (son ${prot.days} gün):</b> ${prot.summary.total} aktif makine — `
-        + `Yedek: <span style="color:#1D9E54">${prot.summary.backupOk} güncel</span> / <span style="color:#DC2626">${prot.summary.backupMiss} eksik</span> · `
-        + `Replika: <span style="color:#1D9E54">${prot.summary.replicaOk} güncel</span> / <span style="color:#DC2626">${prot.summary.replicaMiss} eksik</span>`
-        + (prot.summary.noReplica ? ` / ${prot.summary.noReplica} replikasız` : '') + '</p>' : '';
+        + (showB ? `Yedek: <span style="color:#1D9E54">${prot.summary.backupOk} güncel</span> / <span style="color:#DC2626">${prot.summary.backupMiss} eksik</span>` : '')
+        + (showB && showR ? ' · ' : '')
+        + (showR ? `Replika: <span style="color:#1D9E54">${prot.summary.replicaOk} güncel</span> / <span style="color:#DC2626">${prot.summary.replicaMiss} eksik</span>` + (prot.summary.noReplica ? ` / ${prot.summary.noReplica} replikasız` : '') : '')
+        + '</p>' : '';
     const html = `<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#222222">`
         + `<h2 style="margin:0 0 4px">${entry.query} — Yedekleme ve Replikasyon Raporu</h2>`
         + `<p style="color:#777777;margin:0 0 14px">${trDate()} · Siaflex Sbee</p>`
@@ -121,7 +161,7 @@ export async function sendReportMail(entry) {
         + `<p>Ayrıntılar ekteki PDF raporundadır.</p></div>`;
 
     await transport().sendMail({
-        from: process.env.MAIL_FROM,
+        from: getMailConfig().from,
         to: entry.to.join(', '),
         subject: `${entry.query} — Yedekleme ve Replikasyon Raporu (${trDate()})`,
         html,

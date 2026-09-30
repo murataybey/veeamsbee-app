@@ -445,7 +445,7 @@ function gfsText(g) {
     return p.length ? p.join(' · ') : null;
 }
 
-async function customerReportForServer(srv, q, days) {
+async function customerReportForServer(srv, q, days, types = 'all') {
     const out = { server: srv.name, jobs: [], totals: { jobs: 0, healthy: 0, warning: 0, failed: 0, other: 0, vms: 0, vmsActive: 0, vmsStale: 0, restorePoints: 0, rpBackup: 0, rpSnapshot: 0, rpReplica: 0 } };
     if (srv.product !== 'vbr') {
         out.error = 'Rapor şimdilik yalnızca VBR sunucularını destekliyor';
@@ -673,6 +673,9 @@ async function customerReportForServer(srv, q, days) {
         });
 
         for (const s of matched) {
+            const isReplicaJob = /replica/i.test(s.type || '');
+            if (types === 'backup' && isReplicaJob) continue;
+            if (types === 'replica' && !isReplicaJob) continue;
             const cfg = configs.get(s.id);
             const inc = cfg?.virtualMachines?.includes || [];
             const matchedScope = inc.filter((o) => trLower(o.name).includes(q)).map((o) => `${o.type}: ${o.name}`);
@@ -791,7 +794,7 @@ async function customerReportForServer(srv, q, days) {
             addTotals(blk, isDetached(b) ? 'rpSnapshot' : 'rpBackup');
         };
         const included = new Set();
-        for (const b of backups.filter((x) => !matchedIds.has(x.jobId) && trLower(x.name).includes(q))) {
+        for (const b of types === 'replica' ? [] : backups.filter((x) => !matchedIds.has(x.jobId) && trLower(x.name).includes(q))) {
             included.add(b.id);
             pushOrphan(b, await backupBlock(b), isDetached(b) ? 'snapshot/yedek adı' : 'yedek adı (job\'ı aktif listede yok)');
         }
@@ -802,7 +805,7 @@ async function customerReportForServer(srv, q, days) {
             .filter((b) => isDetached(b) && !included.has(b.id) && !trLower(b.name).includes(q))
             .slice(0, 15);
         const tokens = matchTokens(q);
-        for (const b of probeCandidates) {
+        for (const b of types === 'replica' ? [] : probeCandidates) {
             const probe = await restGet(srv, auth, `/api/v1/backups/${encodeURIComponent(b.id)}/objects?limit=200`, 60000).catch(() => null);
             const objs = probe?.json?.data || [];
             if (!objs.length) continue;
@@ -838,7 +841,7 @@ async function customerReportForServer(srv, q, days) {
         }
 
         // Adı eşleşen ama eşleşen job'lara bağlı olmayan replikalar
-        const orphanReplicas = replicas.filter((r) => !matchedIds.has(r.jobId) && trLower(r.name || '').includes(q));
+        const orphanReplicas = types === 'backup' ? [] : replicas.filter((r) => !matchedIds.has(r.jobId) && trLower(r.name || '').includes(q));
         if (orphanReplicas.length) {
             const blk = await replicaBlock(orphanReplicas);
             out.jobs.push({
@@ -916,18 +919,19 @@ async function customerReportForServer(srv, q, days) {
 const REPORT_CACHE_MS = 10 * 60 * 1000;
 const reportCache = new Map(); // q -> { ts, promise }
 
-export function customerReport(name, days) {
-    const q = trLower(name).trim() + '|' + (days || 0);
+export function customerReport(name, days, types = 'all') {
+    const q = trLower(name).trim() + '|' + (days || 0) + '|' + types;
     const hit = reportCache.get(q);
     if (hit && Date.now() - hit.ts < REPORT_CACHE_MS) return hit.promise;
 
     const promise = (async () => {
         const servers = listServers();
         const qName = trLower(name).trim();
-        const sections = await Promise.all(servers.map((srv) => customerReportForServer(srv, qName, days)));
+        const sections = await Promise.all(servers.map((srv) => customerReportForServer(srv, qName, days, types)));
         return {
             query: name,
             days: days || null,
+            types,
             generatedAt: new Date().toISOString(),
             servers: sections,
         };
