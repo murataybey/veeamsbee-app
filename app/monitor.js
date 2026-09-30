@@ -445,7 +445,7 @@ function gfsText(g) {
     return p.length ? p.join(' · ') : null;
 }
 
-async function customerReportForServer(srv, q) {
+async function customerReportForServer(srv, q, days) {
     const out = { server: srv.name, jobs: [], totals: { jobs: 0, healthy: 0, warning: 0, failed: 0, other: 0, vms: 0, vmsActive: 0, vmsStale: 0, restorePoints: 0, rpBackup: 0, rpSnapshot: 0, rpReplica: 0 } };
     if (srv.product !== 'vbr') {
         out.error = 'Rapor şimdilik yalnızca VBR sunucularını destekliyor';
@@ -453,6 +453,8 @@ async function customerReportForServer(srv, q) {
     }
     try {
         const auth = await getToken(srv);
+        // Koruma penceresi: günlük yedek/replika sayımları için toplayıcı
+        const dayWin = days ? { cutoff: Date.now() - days * 86400000, backup: {}, replica: {} } : null;
         const [statesRes, configsRes, backupsRes, replicasRes] = await Promise.all([
             restGet(srv, auth, '/api/v1/jobs/states?limit=500'),
             restGet(srv, auth, '/api/v1/jobs?limit=500').catch(() => null),
@@ -471,12 +473,21 @@ async function customerReportForServer(srv, q) {
         // Makinenin nokta listesi tek çağrıda çekilir ve İLGİLİ ZİNCİRE (backupId)
         // göre süzülür — böylece snapshot bölümü snapshot sayısını, backup bölümü
         // backup sayısını gösterir; kırılım toplamları da bundan çıkar
-        const backupVm = async (o, backupId, activeDays = 7) => {
+        const backupVm = async (o, backupId, activeDays = 7, dayWin = null) => {
             const res = await restGet(srv, auth,
                 `/api/v1/backupObjects/${encodeURIComponent(o.id)}/restorePoints?limit=500&orderColumn=CreationTime&orderAsc=false`, 90000)
                 .catch(() => null);
             const all = res?.json?.data || [];
             const chain = all.filter((p) => p.backupId === backupId);
+            if (dayWin) {
+                for (const p of chain) {
+                    const t = p.creationTime ? new Date(p.creationTime).getTime() : 0;
+                    if (t >= dayWin.cutoff) {
+                        const day = String(p.creationTime).slice(0, 10);
+                        dayWin.backup[day] = (dayWin.backup[day] || 0) + 1;
+                    }
+                }
+            }
             const newestTs = chain[0]?.creationTime ? new Date(chain[0].creationTime).getTime() : 0;
             return {
                 objId: o.id,
@@ -490,6 +501,7 @@ async function customerReportForServer(srv, q) {
 
         const OBJ_CAP = 150;
         const backupBlock = async (b, activeDays = 7) => {
+            void 0;
             let objErr = null;
             // Yüklü sunucuda büyük listelemeler 20 sn'yi aşabiliyor: 90 sn + 1 tekrar
             const objUrl = `/api/v1/backups/${encodeURIComponent(b.id)}/objects?limit=500`;
@@ -505,7 +517,7 @@ async function customerReportForServer(srv, q) {
             const objs = all.slice(0, OBJ_CAP);
             const vms = [];
             for (let i = 0; i < objs.length; i += 8) {
-                vms.push(...await Promise.all(objs.slice(i, i + 8).map((o) => backupVm(o, b.id, activeDays))));
+                vms.push(...await Promise.all(objs.slice(i, i + 8).map((o) => backupVm(o, b.id, activeDays, dayWin))));
             }
             return {
                 name: b.name + (all.length > OBJ_CAP ? ` (ilk ${OBJ_CAP}/${all.length} makine)` : ''),
@@ -609,11 +621,19 @@ async function customerReportForServer(srv, q) {
         // restorePoints?backupIdFilter replika id'sini yok sayıp TÜM ortamı döndürüyor — kullanma).
         // Nokta kaydının adı kaynak VM adıdır; replika kaydının adı değil.
         const replicaVm = async (r, activeDays = 7) => {
-            const [newestRes, oldestRes] = await Promise.all([
-                restGet(srv, auth, `/api/v1/replicaPoints?limit=1&replicaIdFilter=${encodeURIComponent(r.id)}&orderColumn=CreationTime&orderAsc=false`, 45000).catch(() => null),
-                restGet(srv, auth, `/api/v1/replicaPoints?limit=1&replicaIdFilter=${encodeURIComponent(r.id)}&orderColumn=CreationTime&orderAsc=true`, 45000).catch(() => null),
-            ]);
-            const np = newestRes?.json?.data?.[0];
+            const newestRes = await restGet(srv, auth, `/api/v1/replicaPoints?limit=500&replicaIdFilter=${encodeURIComponent(r.id)}&orderColumn=CreationTime&orderAsc=false`, 60000).catch(() => null);
+            const list = newestRes?.json?.data || [];
+            const oldestRes = { json: { data: [list[list.length - 1]] } };
+            if (dayWin) {
+                for (const p of list) {
+                    const t = p?.creationTime ? new Date(p.creationTime).getTime() : 0;
+                    if (t >= dayWin.cutoff) {
+                        const day = String(p.creationTime).slice(0, 10);
+                        dayWin.replica[day] = (dayWin.replica[day] || 0) + 1;
+                    }
+                }
+            }
+            const np = list[0];
             const newestTs = np?.creationTime ? new Date(np.creationTime).getTime() : 0;
             return {
                 name: (np?.name || r.name || '?') + (r.state && r.state !== 'Ready' ? ` (${r.state})` : ''),
@@ -836,6 +856,55 @@ async function customerReportForServer(srv, q) {
             out.totals.jobs += 1;
             addTotals(blk, 'rpReplica');
         }
+
+        // --- Koruma Durumu (son N gün): aktif makine başına son yedek/replika ---
+        if (days) {
+            const cutoffP = Date.now() - days * 86400000;
+            const prot = new Map(); // makine adı (küçük harf) -> kayıt
+            for (const job of out.jobs) {
+                for (const b of job.backups || []) {
+                    const isRep = job.kind === 'Replikasyon';
+                    for (const v of b.vms) {
+                        const clean = String(v.name).replace(/ \([^)]*\)$/, '').replace(/[_-][Rr]ep(lica)?$/, '');
+                        const key = trLower(clean);
+                        const e = prot.get(key) || { name: clean, lastBackup: null, lastReplica: null, active: false };
+                        if (v.active) e.active = true;
+                        if (isRep) {
+                            if (v.newest && (!e.lastReplica || v.newest > e.lastReplica)) e.lastReplica = v.newest;
+                        } else if (v.newest && (!e.lastBackup || v.newest > e.lastBackup)) {
+                            e.lastBackup = v.newest;
+                        }
+                        prot.set(key, e);
+                    }
+                }
+            }
+            const rows = [...prot.values()].filter((e) => e.active).map((e) => ({
+                name: e.name,
+                lastBackup: e.lastBackup,
+                backupOk: !!e.lastBackup && new Date(e.lastBackup).getTime() >= cutoffP,
+                lastReplica: e.lastReplica,
+                replicaOk: e.lastReplica ? new Date(e.lastReplica).getTime() >= cutoffP : null,
+            })).sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+            const daily = [];
+            for (let i = days - 1; i >= 0; i--) {
+                const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+                daily.push({ date: d, backups: dayWin.backup[d] || 0, replicas: dayWin.replica[d] || 0 });
+            }
+            out.protection = {
+                days,
+                vms: rows,
+                daily,
+                summary: {
+                    total: rows.length,
+                    backupOk: rows.filter((r) => r.backupOk).length,
+                    backupMiss: rows.filter((r) => !r.backupOk).length,
+                    replicaOk: rows.filter((r) => r.replicaOk === true).length,
+                    replicaMiss: rows.filter((r) => r.replicaOk === false).length,
+                    noReplica: rows.filter((r) => r.replicaOk === null).length,
+                },
+                excludedStale: [...prot.values()].filter((e) => !e.active).length,
+            };
+        }
     } catch (err) {
         out.error = String(err?.message || err);
     }
@@ -847,16 +916,18 @@ async function customerReportForServer(srv, q) {
 const REPORT_CACHE_MS = 10 * 60 * 1000;
 const reportCache = new Map(); // q -> { ts, promise }
 
-export function customerReport(name) {
-    const q = trLower(name).trim();
+export function customerReport(name, days) {
+    const q = trLower(name).trim() + '|' + (days || 0);
     const hit = reportCache.get(q);
     if (hit && Date.now() - hit.ts < REPORT_CACHE_MS) return hit.promise;
 
     const promise = (async () => {
         const servers = listServers();
-        const sections = await Promise.all(servers.map((srv) => customerReportForServer(srv, q)));
+        const qName = trLower(name).trim();
+        const sections = await Promise.all(servers.map((srv) => customerReportForServer(srv, qName, days)));
         return {
             query: name,
+            days: days || null,
             generatedAt: new Date().toISOString(),
             servers: sections,
         };

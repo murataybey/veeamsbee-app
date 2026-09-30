@@ -169,6 +169,50 @@ export async function reportToDocx(rep) {
         { size: 17, color: COLOR.gray },
     ), { before: 60, after: 0 }));
 
+    // Koruma Durumu (son N gün)
+    for (const s of rep.servers) {
+        const P = s.protection;
+        if (!P || !P.vms.length) continue;
+        const sm = P.summary;
+        children.push(para(run(`Koruma Durumu — son ${P.days} gün (${s.server})`, { size: 24, bold: true }), { before: 300, after: 60 }));
+        children.push(para([
+            run(`${sm.total} aktif makine   ·   Yedek: `, { size: 18 }),
+            run(`${sm.backupOk} güncel`, { size: 18, bold: true, color: COLOR.ok }),
+            run(' / ', { size: 18, color: COLOR.gray }),
+            run(`${sm.backupMiss} eksik`, { size: 18, bold: true, color: COLOR.fail }),
+            run('   ·   Replika: ', { size: 18 }),
+            run(`${sm.replicaOk} güncel`, { size: 18, bold: true, color: COLOR.ok }),
+            run(' / ', { size: 18, color: COLOR.gray }),
+            run(`${sm.replicaMiss} eksik`, { size: 18, bold: true, color: COLOR.fail }),
+            run(` / ${sm.noReplica} replikasız`, { size: 18, color: COLOR.gray }),
+        ], { after: 80 }));
+        const pw = [3300, 2000, 800, 2000, 1538];
+        const phead = ['Makine', 'Son Yedek', 'Yedek', 'Son Replika', 'Replika'];
+        const prows = [new TableRow({
+            tableHeader: true,
+            children: phead.map((h, i) => cell(para(run(h, { size: 16, bold: true }), { after: 0, align: i >= 2 && i !== 3 ? AlignmentType.CENTER : undefined }), { width: pw[i], margins: { top: 60, bottom: 60, left: 60, right: 60 } })),
+        })];
+        const sorted = [...P.vms].sort((a, b) => (a.backupOk === b.backupOk ? 0 : a.backupOk ? 1 : -1) || a.name.localeCompare(b.name, 'tr'));
+        for (const r of sorted) {
+            prows.push(new TableRow({
+                children: [
+                    cell(para(run(r.name, { size: 17 }), { after: 0 }), { width: pw[0], margins: { top: 50, bottom: 50, left: 60, right: 60 } }),
+                    cell(para(run(fmt(r.lastBackup), { size: 16, color: r.backupOk ? '333333' : COLOR.fail }), { after: 0 }), { width: pw[1], margins: { top: 50, bottom: 50, left: 60, right: 60 } }),
+                    cell(para(run(r.backupOk ? '✓' : '✗', { size: 18, bold: true, color: r.backupOk ? COLOR.ok : COLOR.fail }), { after: 0, align: AlignmentType.CENTER }), { width: pw[2], margins: { top: 50, bottom: 50, left: 60, right: 60 } }),
+                    cell(para(run(fmt(r.lastReplica), { size: 16, color: r.replicaOk === false ? COLOR.fail : '333333' }), { after: 0 }), { width: pw[3], margins: { top: 50, bottom: 50, left: 60, right: 60 } }),
+                    cell(para(run(r.replicaOk === null ? '—' : r.replicaOk ? '✓' : '✗', { size: 18, bold: true, color: r.replicaOk === null ? '9AA0A6' : r.replicaOk ? COLOR.ok : COLOR.fail }), { after: 0, align: AlignmentType.CENTER }), { width: pw[4], margins: { top: 50, bottom: 50, left: 60, right: 60 } }),
+                ],
+            }));
+        }
+        children.push(table(prows, pw, {
+            top: thinBlack, bottom: thinBlack, left: none, right: none,
+            insideHorizontal: thinGray, insideVertical: none,
+        }));
+        if (P.excludedStale > 0) {
+            children.push(para(run(`Not: ${P.excludedStale} eski/silinmiş makine bu değerlendirmeye dahil edilmedi.`, { size: 15, color: COLOR.gray }), { before: 40 }));
+        }
+    }
+
     // Detaylar
     children.push(para(run('Detaylar', { size: 24, bold: true }), { before: 300, after: 60 }));
     for (const s of rep.servers) {
@@ -422,6 +466,99 @@ export function reportToPdf(rep, stream) {
         }
         doc.y += 14;
         doc.x = L;
+    }
+
+    // --- Koruma Durumu (son N gün) — Veeam ONE tarzı ---
+    for (const s of rep.servers) {
+        const P = s.protection;
+        if (!P || !P.vms.length) continue;
+        section(`Koruma Durumu — son ${P.days} gün (${s.server})`);
+        const sm = P.summary;
+        doc.font(F).fontSize(9).fillColor('#333333')
+            .text(`${sm.total} aktif makine   ·   Yedek: `, L, doc.y, { continued: true })
+            .fillColor(hx(COLOR.ok)).text(`${sm.backupOk} güncel`, { continued: true })
+            .fillColor('#666666').text(' / ', { continued: true })
+            .fillColor(hx(COLOR.fail)).text(`${sm.backupMiss} eksik`, { continued: true })
+            .fillColor('#333333').text('   ·   Replika: ', { continued: true })
+            .fillColor(hx(COLOR.ok)).text(`${sm.replicaOk} güncel`, { continued: true })
+            .fillColor('#666666').text(' / ', { continued: true })
+            .fillColor(hx(COLOR.fail)).text(`${sm.replicaMiss} eksik`, { continued: true })
+            .fillColor('#666666').text(` / ${sm.noReplica} replikasız`);
+        doc.moveDown(0.5);
+
+        // Günlük çubuklar: yeşil = yedek noktaları, mavi = replika noktaları
+        const dd = P.daily || [];
+        if (dd.length) {
+            const chH = 85;
+            pageBreak(chH + 64);
+            const baseY = doc.y + chH + 12;
+            const maxV = Math.max(1, ...dd.map((d) => Math.max(d.backups, d.replicas)));
+            const slot = W / dd.length;
+            const bw = Math.min(18, slot * 0.28);
+            doc.moveTo(L, baseY).lineTo(R, baseY).strokeColor(hx(COLOR.line)).lineWidth(0.8).stroke();
+            dd.forEach((d, i) => {
+                const cx0 = L + i * slot + slot / 2;
+                const hb = (d.backups / maxV) * chH;
+                const hr = (d.replicas / maxV) * chH;
+                if (hb > 0) doc.rect(cx0 - bw - 1, baseY - hb, bw, hb).fill(hx(COLOR.ok));
+                if (hr > 0) doc.rect(cx0 + 1, baseY - hr, bw, hr).fill('#2563EB');
+                doc.font(F).fontSize(6.2).fillColor('#333333').text(String(d.backups), cx0 - bw - 7, baseY - hb - 9, { width: bw + 12, align: 'center', lineBreak: false });
+                doc.font(F).fontSize(6.2).fillColor('#333333').text(String(d.replicas), cx0 - 5, baseY - hr - 9, { width: bw + 12, align: 'center', lineBreak: false });
+                if (dd.length <= 16 || i % Math.ceil(dd.length / 16) === 0) {
+                    doc.font(F).fontSize(6.3).fillColor('#555555')
+                        .text(d.date.slice(5).split('-').reverse().join('.'), L + i * slot, baseY + 3, { width: slot, align: 'center', lineBreak: false });
+                }
+            });
+            doc.y = baseY + 14;
+            doc.circle(L + 3, doc.y + 4, 3).fill(hx(COLOR.ok));
+            doc.font(F).fontSize(7.5).fillColor('#555555').text('Yedek noktaları', L + 10, doc.y, { lineBreak: false });
+            const lx = L + 10 + doc.widthOfString('Yedek noktaları') + 18;
+            doc.circle(lx + 3, doc.y + 4, 3).fill('#2563EB');
+            doc.text('Replika noktaları', lx + 10, doc.y, { lineBreak: false });
+            doc.y += 16;
+            doc.x = L;
+        }
+
+        // Makine tablosu: sorunlular üstte
+        const rows = [...P.vms].sort((a, b) =>
+            (a.backupOk === b.backupOk ? (a.replicaOk === false ? -1 : 0) - (b.replicaOk === false ? -1 : 0) : (a.backupOk ? 1 : -1))
+            || a.name.localeCompare(b.name, 'tr'));
+        const pcols = [
+            { h: 'Makine', w: 0.34, get: (r) => r.name, color: () => '#222222' },
+            { h: 'Son Yedek', w: 0.21, get: (r) => fmt(r.lastBackup), color: (r) => (r.backupOk ? '#222222' : hx(COLOR.fail)) },
+            { h: 'Yedek', w: 0.08, get: (r) => (r.backupOk ? '✓' : '✗'), color: (r) => (r.backupOk ? hx(COLOR.ok) : hx(COLOR.fail)), align: 'center', bold: true },
+            { h: 'Son Replika', w: 0.21, get: (r) => fmt(r.lastReplica), color: (r) => (r.replicaOk === false ? hx(COLOR.fail) : '#222222') },
+            { h: 'Replika', w: 0.16, get: (r) => (r.replicaOk === null ? '—' : r.replicaOk ? '✓' : '✗'), color: (r) => (r.replicaOk === null ? '#9AA0A6' : r.replicaOk ? hx(COLOR.ok) : hx(COLOR.fail)), align: 'center', bold: true },
+        ];
+        let py = doc.y;
+        doc.moveTo(L, py - 1).lineTo(R, py - 1).strokeColor(hx(COLOR.line)).lineWidth(0.8).stroke();
+        let pcx = L;
+        for (const c of pcols) {
+            doc.font(FB).fontSize(7.8).fillColor(hx(COLOR.dark)).text(c.h, pcx + 2, py + 3, { width: W * c.w - 4, align: c.align, lineBreak: false });
+            pcx += W * c.w;
+        }
+        py += 15;
+        doc.moveTo(L, py).lineTo(R, py).strokeColor(hx(COLOR.line)).lineWidth(0.8).stroke();
+        for (const r of rows) {
+            if (py > doc.page.height - doc.page.margins.bottom - 24) {
+                doc.addPage();
+                py = doc.page.margins.top;
+            }
+            let vx = L;
+            for (const c of pcols) {
+                doc.font(c.bold ? FB : F).fontSize(7.8).fillColor(c.color(r)).text(c.get(r), vx + 2, py + 4, { width: W * c.w - 4, align: c.align, lineBreak: false });
+                vx += W * c.w;
+            }
+            py += 15;
+            doc.moveTo(L, py).lineTo(R, py).strokeColor('#E1E5E8').lineWidth(0.4).stroke();
+        }
+        doc.y = py + 8;
+        doc.x = L;
+        if (P.excludedStale > 0) {
+            doc.font(F).fontSize(7.5).fillColor('#777777')
+                .text(`Not: ${P.excludedStale} eski/silinmiş makine bu değerlendirmeye dahil edilmedi.`, L, doc.y, { width: W });
+            doc.moveDown(0.3);
+        }
     }
 
     // --- Detaylar ---

@@ -498,6 +498,10 @@
     color: var(--text); border-radius: 8px; padding: 9px 12px; font-size: 14px;
   }
   .rep-search input:focus { outline: 1px solid var(--accent); }
+  .rep-search select {
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 8px; padding: 0 10px; font-size: 13px;
+  }
   .rep-sug {
     position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 40;
     background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
@@ -649,6 +653,13 @@
           <input type="text" id="repName" placeholder="müşteri adı ya da job adı…" autocomplete="off">
           <div class="rep-sug" id="repSug" hidden></div>
         </div>
+        <select id="repDays" title="Koruma penceresi: makineler bu süre içinde yedeklenmiş mi?">
+          <option value="">Dönemsiz</option>
+          <option value="1">Son 1 gün</option>
+          <option value="3">Son 3 gün</option>
+          <option value="7" selected>Son 7 gün</option>
+          <option value="30">Son 30 gün</option>
+        </select>
         <button class="btn primary" id="repGo">Rapor Al</button>
         <button class="btn" id="repDocx" title="Word (.docx) olarak indir">📄 Word</button>
         <button class="btn" id="repPdf" title="PDF olarak indir">📕 PDF</button>
@@ -1246,6 +1257,35 @@
     rpLine.style.margin = '-6px 0 12px';
     repOut.appendChild(rpLine);
 
+    // Koruma Durumu (son N gün)
+    for (const s of rep.servers) {
+      const P = s.protection;
+      if (!P || !P.vms.length) continue;
+      const card = el('div', 'rep-job');
+      const h = el('div', 'rep-job-head');
+      h.appendChild(el('b', undefined, 'Koruma Durumu — son ' + P.days + ' gün (' + s.server + ')'));
+      card.appendChild(h);
+      const sm = P.summary;
+      card.appendChild(el('div', 'rep-meta',
+        sm.total + ' aktif makine · Yedek: ' + sm.backupOk + ' güncel / ' + sm.backupMiss + ' eksik · Replika: ' + sm.replicaOk + ' güncel / ' + sm.replicaMiss + ' eksik / ' + sm.noReplica + ' replikasız'));
+      const tbl = el('table', 'rep-vms');
+      const sorted = [...P.vms].sort((a, b) => (a.backupOk === b.backupOk ? 0 : a.backupOk ? 1 : -1) || a.name.localeCompare(b.name, 'tr'));
+      for (const r of sorted) {
+        const tr = el('tr');
+        tr.appendChild(el('td', undefined, r.name));
+        const tdB = el('td', undefined, (r.backupOk ? '✓ ' : '✗ ') + repTime(r.lastBackup));
+        tdB.style.color = r.backupOk ? 'var(--accent)' : 'var(--red)';
+        tr.appendChild(tdB);
+        const tdR = el('td', undefined, r.replicaOk === null ? '— replikasız' : (r.replicaOk ? '✓ ' : '✗ ') + repTime(r.lastReplica));
+        tdR.style.color = r.replicaOk === null ? 'var(--muted)' : (r.replicaOk ? 'var(--accent)' : 'var(--red)');
+        tr.appendChild(tdR);
+        tbl.appendChild(tr);
+      }
+      card.appendChild(tbl);
+      if (P.excludedStale > 0) card.appendChild(el('div', 'hint', P.excludedStale + ' eski/silinmiş makine değerlendirmeye dahil edilmedi.'));
+      repOut.appendChild(card);
+    }
+
     let any = false;
     for (const s of rep.servers) {
       const sec = el('div', 'rep-server');
@@ -1353,7 +1393,8 @@
     if (name.length < 2) { repName.focus(); return; }
     repOut.replaceChildren(el('div', 'rep-empty', 'Rapor hazırlanıyor…'));
     try {
-      const resp = await fetch('/api/report/customer?name=' + encodeURIComponent(name));
+      const days = document.getElementById('repDays').value;
+      const resp = await fetch('/api/report/customer?name=' + encodeURIComponent(name) + (days ? '&days=' + days : ''));
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || resp.status);
       renderReport(data);
@@ -1367,7 +1408,8 @@
   function downloadReport(ext) {
     const name = repName.value.trim();
     if (name.length < 2) { repName.focus(); return; }
-    window.location.href = '/api/report/customer.' + ext + '?name=' + encodeURIComponent(name);
+    const days = document.getElementById('repDays').value;
+    window.location.href = '/api/report/customer.' + ext + '?name=' + encodeURIComponent(name) + (days ? '&days=' + days : '');
   }
   document.getElementById('repDocx').addEventListener('click', () => downloadReport('docx'));
   document.getElementById('repPdf').addEventListener('click', () => downloadReport('pdf'));

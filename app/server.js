@@ -477,11 +477,16 @@ function reportName(req, res) {
     return name;
 }
 
+function reportDays(req) {
+    const d = parseInt(req.query.days, 10);
+    return Number.isFinite(d) && d >= 1 && d <= 90 ? d : null;
+}
+
 app.get('/api/report/customer', async (req, res) => {
     const name = reportName(req, res);
     if (!name) return;
     try {
-        res.json(await customerReport(name));
+        res.json(await customerReport(name, reportDays(req)));
     } catch (err) {
         res.status(502).json({ error: String(err?.message || err) });
     }
@@ -496,7 +501,7 @@ app.get('/api/report/customer.docx', async (req, res) => {
     const name = reportName(req, res);
     if (!name) return;
     try {
-        const buf = await reportToDocx(await customerReport(name));
+        const buf = await reportToDocx(await customerReport(name, reportDays(req)));
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         res.setHeader('Content-Disposition', `attachment; filename="${exportFilename(name, 'docx')}"`);
         res.send(buf);
@@ -509,7 +514,7 @@ app.get('/api/report/customer.pdf', async (req, res) => {
     const name = reportName(req, res);
     if (!name) return;
     try {
-        const rep = await customerReport(name);
+        const rep = await customerReport(name, reportDays(req));
         res.setHeader('Content-Type', 'application/pdf');
         const mode = req.query.inline ? 'inline' : 'attachment';
         res.setHeader('Content-Disposition', `${mode}; filename="${exportFilename(name, 'pdf')}"`);
