@@ -626,7 +626,11 @@
           <div><label for="sPass">Parola</label><input type="password" id="sPass" autocomplete="new-password" placeholder="değiştirmek için yazın"></div>
           <div><label for="sFrom">Gönderen adres</label><input type="text" id="sFrom" placeholder="raporlar@sirket.com"></div>
           <label class="form-check"><input type="checkbox" id="sSecure"> SSL (465) — 587 STARTTLS için işaretsiz bırakın</label>
-          <div><button type="submit" class="btn primary">SMTP Kaydet</button></div>
+          <div><label for="sTestTo">Test alıcısı (test maili bu adrese gider)</label><input type="text" id="sTestTo" placeholder="siz@sirket.com"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button type="submit" class="btn primary">SMTP Kaydet</button>
+            <button type="button" class="btn" id="smtpTestBtn">Kaydet ve Test Et</button>
+          </div>
         </form>
         <div class="form-msg" id="smtpMsg"></div>
         <h2 style="margin-top:20px">Zamanlanmış Raporlar</h2>
@@ -1574,31 +1578,67 @@
     } catch { /* yoksay */ }
   }
 
+  async function saveSmtp() {
+    const r = await fetch('/api/mailconfig', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        host: document.getElementById('sHost').value,
+        port: Number(document.getElementById('sPort').value),
+        user: document.getElementById('sUser').value,
+        pass: document.getElementById('sPass').value,
+        secure: document.getElementById('sSecure').checked,
+        from: document.getElementById('sFrom').value,
+      }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error);
+    document.getElementById('sPass').value = '';
+    document.getElementById('sPass').placeholder = 'kayıtlı — değiştirmek için yazın';
+    return d;
+  }
+
   document.getElementById('smtpForm').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const msg = document.getElementById('smtpMsg');
     try {
-      const r = await fetch('/api/mailconfig', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          host: document.getElementById('sHost').value,
-          port: Number(document.getElementById('sPort').value),
-          user: document.getElementById('sUser').value,
-          pass: document.getElementById('sPass').value,
-          secure: document.getElementById('sSecure').checked,
-          from: document.getElementById('sFrom').value,
-        }),
-      });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error);
-      document.getElementById('sPass').value = '';
+      const d = await saveSmtp();
       msg.textContent = d.configured ? 'Kaydedildi — gönderime hazır ✓' : 'Kaydedildi (sunucu ve gönderen adres olmadan gönderim yapılamaz)';
       msg.style.color = d.configured ? 'var(--accent)' : 'var(--amber)';
       renderMailReports();
     } catch (err) {
       msg.textContent = 'Kaydedilemedi: ' + err.message;
       msg.style.color = 'var(--red)';
+    }
+  });
+
+  document.getElementById('smtpTestBtn').addEventListener('click', async () => {
+    const msg = document.getElementById('smtpMsg');
+    const btn = document.getElementById('smtpTestBtn');
+    const to = document.getElementById('sTestTo').value.trim();
+    btn.disabled = true;
+    try {
+      msg.style.color = 'var(--muted)';
+      msg.textContent = 'Kaydediliyor…';
+      await saveSmtp();
+      msg.textContent = to ? 'Bağlantı sınanıyor ve test maili gönderiliyor…' : 'Bağlantı sınanıyor…';
+      const r = await fetch('/api/mailconfig/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      msg.textContent = d.sent
+        ? `✓ Bağlantı doğrulandı, test maili gönderildi → ${d.to} — gelen kutusunu (ve spam klasörünü) kontrol edin.`
+        : '✓ Bağlantı doğrulandı. Test maili de göndermek için üstteki "Test alıcısı" alanına bir adres yazın.';
+      msg.style.color = 'var(--accent)';
+      renderMailReports();
+    } catch (err) {
+      msg.textContent = '✗ ' + err.message;
+      msg.style.color = 'var(--red)';
+    } finally {
+      btn.disabled = false;
     }
   });
 

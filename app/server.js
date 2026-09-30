@@ -7,7 +7,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { startMonitor, forcePoll, getStatus, getEvents, summaryForDigest, customerReport, suggestNames } from './monitor.js';
 import { reportToDocx, reportToPdf } from './report-export.js';
-import { mailConfigured, listMailReports, addMailReport, deleteMailReport, sendReportMail, startMailScheduler, getMailConfig, setMailConfig } from './mailer.js';
+import { mailConfigured, listMailReports, addMailReport, deleteMailReport, sendReportMail, startMailScheduler, getMailConfig, setMailConfig, testSmtp } from './mailer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -542,6 +542,15 @@ app.post('/api/mailconfig', (req, res) => {
         res.json({ ok: true, configured: mailConfigured() });
     } catch (err) {
         res.status(400).json({ error: String(err?.message || err) });
+    }
+});
+
+// SMTP bağlantı testi + isteğe bağlı test maili (rapor üretmeden, hızlı)
+app.post('/api/mailconfig/test', async (req, res) => {
+    try {
+        res.json({ ok: true, ...(await testSmtp(req.body?.to)) });
+    } catch (err) {
+        res.status(502).json({ error: String(err?.message || err) });
     }
 });
 

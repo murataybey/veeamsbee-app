@@ -74,7 +74,58 @@ function transport() {
         secure: c.secure,
         auth: c.user ? { user: c.user, pass: String(cfgVal('pass', 'SMTP_PASS') || '') } : undefined,
         tls: { rejectUnauthorized: false },
+        connectionTimeout: 20000,
+        greetingTimeout: 20000,
     });
+}
+
+// nodemailer hatalarını yöneticinin doğrudan aksiyon alabileceği Türkçe metne çevirir
+function smtpErrText(err) {
+    const code = err?.code || '';
+    const host = getMailConfig().host;
+    if (code === 'EDNS' || code === 'EAI_AGAIN' || code === 'ENOTFOUND') {
+        return `Sunucu adı çözümlenemedi (DNS): "${host}" — adı kontrol edin; kısa ad yerine tam alan adı (FQDN) veya IP deneyin.`;
+    }
+    if (code === 'ECONNREFUSED') {
+        return `Bağlantı reddedildi: ${host} — port kapalı ya da SMTP servisi bu portu dinlemiyor.`;
+    }
+    if (code === 'ETIMEDOUT' || code === 'ESOCKET' || code === 'ECONNECTION' || /timeout/i.test(String(err?.message || ''))) {
+        return `Bağlantı kurulamadı (zaman aşımı): ${host} — güvenlik duvarının Sbee sunucusundan (10.11.18.110) bu porta erişime izin verdiğini kontrol edin.`;
+    }
+    if (code === 'EAUTH') {
+        return 'Kimlik doğrulama başarısız — kullanıcı adı ve parolayı kontrol edin.' + (err?.response ? ` Sunucu yanıtı: ${err.response}` : '');
+    }
+    let m = String(err?.message || err);
+    if (err?.response && !m.includes(err.response)) m += ' — sunucu yanıtı: ' + err.response;
+    return m;
+}
+
+// SMTP bağlantı + isteğe bağlı test maili. Rapor üretmeden hızlıca doğrular.
+export async function testSmtp(to) {
+    if (!mailConfigured()) {
+        throw new Error('SMTP yapılandırılmamış — önce formu doldurup kaydedin.');
+    }
+    const t = transport();
+    try {
+        await t.verify();
+    } catch (err) {
+        throw new Error('Bağlantı testi başarısız: ' + smtpErrText(err));
+    }
+    const addr = String(to || '').trim();
+    if (!addr) return { verified: true, sent: false };
+    try {
+        await t.sendMail({
+            from: getMailConfig().from,
+            to: addr,
+            subject: `Sbee SMTP testi (${trDate()})`,
+            html: '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px">'
+                + '<p>Bu bir <b>Siaflex Sbee</b> SMTP test iletisidir.</p>'
+                + '<p>Bu maili aldıysanız gönderim ayarları çalışıyor demektir; zamanlanmış raporlar da aynı yoldan gönderilecek. 🐝</p></div>',
+        });
+    } catch (err) {
+        throw new Error('Bağlantı kuruldu ancak gönderim başarısız: ' + smtpErrText(err));
+    }
+    return { verified: true, sent: true, to: addr };
 }
 
 export function listMailReports() {
@@ -130,6 +181,20 @@ function pdfBuffer(rep) {
 }
 
 export async function sendReportMail(entry) {
+    try {
+        await sendReportMailCore(entry);
+    } catch (err) {
+        const msg = smtpErrText(err);
+        const stored = entries.find((e) => e.id === entry.id);
+        if (stored) {
+            stored.lastResult = 'Hata: ' + msg;
+            persist();
+        }
+        throw new Error(msg);
+    }
+}
+
+async function sendReportMailCore(entry) {
     if (!mailConfigured()) {
         throw new Error('SMTP yapılandırılmamış — Ayarlar → E-posta Raporları sekmesindeki SMTP formunu doldurup kaydedin.');
     }
